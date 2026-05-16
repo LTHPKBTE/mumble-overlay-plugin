@@ -70,9 +70,8 @@ cmake_install.cmake
 .idea/
 *.user
 
-# 子模块 (需要手动克隆到项目目录)
-cimgui/
-glfw/
+# 子模块 (由 .gitmodules 管理，不要忽略)
+# 初始化为: git submodule update --init --recursive
 
 # 插件打包
 *.mumble_plugin
