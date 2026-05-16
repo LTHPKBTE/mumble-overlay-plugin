@@ -76,6 +76,11 @@ static int overlay_poll_speakers(void *userdata,
     overlay_window_get_config(&cfg);
     int timeout = cfg.idle_timeout_seconds;
     if (timeout < 1) timeout = 5;
+    /* When show_idle_users is on, keep passive users around much longer
+     * so they don't disappear from the list while idle. */
+    if (cfg.show_idle_users && timeout < 600) {
+        timeout = 600; /* 10 minutes */
+    }
     int count = speaking_users_get_all(buffer, 64, timeout);
     if (count > max_count) count = max_count;
 

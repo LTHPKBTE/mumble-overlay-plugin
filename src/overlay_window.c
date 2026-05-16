@@ -488,11 +488,8 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     /* ================================================================
      * Main overlay panel — auto-sized to fit content
      * ================================================================ */
-    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always, ImVec2(0, 0));
-
     ImGuiWindowFlags main_flags = ImGuiWindowFlags_NoTitleBar
                                 | ImGuiWindowFlags_NoResize
-                                | ImGuiWindowFlags_NoMove
                                 | ImGuiWindowFlags_NoCollapse
                                 | ImGuiWindowFlags_NoBringToFrontOnFocus
                                 | ImGuiWindowFlags_NoSavedSettings
@@ -807,8 +804,8 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         if (scale < 0.01f) scale = 1.0f;
         int target_h = (int)(content_h / scale + 0.5f);
         if (target_h < 40) target_h = 40;
-        int target_w = (int)(260.0f / scale + 0.5f);
-        if (target_w < 180) target_w = 180;
+        int target_w = (int)(360.0f / scale + 0.5f);
+        if (target_w < 250) target_w = 250;
         int cur_w, cur_h;
         glfwGetWindowSize(g_window, &cur_w, &cur_h);
         if (abs(target_h - cur_h) > 1 || abs(target_w - cur_w) > 1) {
@@ -1002,6 +999,28 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             glfwMakeContextCurrent(backup_current);
         }
     }
+
+#ifdef _WIN32
+    /* Ensure all ImGui viewport windows (e.g. settings panel) are tool windows
+     * without taskbar entries. The main window gets this in overlay_window_init. */
+    {
+        ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+        for (int i = 0; i < pio.Viewports.Size; i++) {
+            ImGuiViewport* vp = pio.Viewports[i];
+            if (vp->PlatformHandle != NULL && vp->PlatformHandle != glfwGetWin32Window(g_window)) {
+                HWND hwnd = (HWND)vp->PlatformHandle;
+                LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+                if (!(exstyle & WS_EX_TOOLWINDOW)) {
+                    exstyle |= WS_EX_TOOLWINDOW;
+                    exstyle &= ~WS_EX_APPWINDOW;
+                    SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
+                    SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+                }
+            }
+        }
+    }
+#endif
 
     glfwSwapBuffers(g_window);
 
