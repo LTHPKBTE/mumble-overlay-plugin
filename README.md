@@ -5,11 +5,12 @@ Overlay plugin that displays a real-time list of users currently speaking on a M
 ## Features
 
 - Real-time display of talking / whispering / shouting users
-- Adjustable window transparency (Alpha)
+- Adjustable window transparency (Alpha) and text/UI opacity
 - Always on Top
-- Mouse passthrough mode (clicks pass through to windows behind)
+- Mouse passthrough mode — clicks pass through main overlay window, but settings panel remains interactive
 - Recent speakers first — sorting by speaking recency
 - Configurable visible count — limit shown speakers, scroll for the rest (default 8)
+- Show only talking users, or show all users with dimmed idle ones ("Show idle users" setting)
 - Auto-snap to top — list returns to most recent speakers after 10s idle or passthrough
 - Screen edge clamping — window cannot be dragged off-screen
 - Automatic system language detection (English / Chinese)
@@ -36,12 +37,14 @@ Click the Settings button to open:
 | Setting | Description |
 |---|---|
 | **Window opacity** | Slider to adjust window background opacity (0.0 ~ 1.0). Capped at 0.2 unless &#34;Allow risky opacity&#34; is checked |
-| **Text opacity** | Slider to adjust text and UI element opacity (0.0 ~ 1.0) |
-| **Allow risky opacity** | When unchecked, window opacity cannot go below 0.2 |
+| **Text opacity** | Slider to adjust text and UI element opacity (0.0 ~ 1.0), also capped at 0.2 when dangerous mode is off |
+| **Allow risky opacity** | When unchecked, both window and text opacity cannot go below 0.2 |
 | **Scale** | Content scaling factor (0.5x ~ 2.0x) |
 | **Always on top** | Keep window above other windows |
-| **Mouse passthrough** | Let mouse clicks pass through the window |
+| **Mouse passthrough** | Let mouse clicks pass through the main overlay window (the settings panel stays interactive) |
 | **Visible speakers** | Number of recent speakers shown at top (1~64) |
+| **Show idle users** | When checked, non-speaking users are shown dimmed in the list. When unchecked, only actively-speaking users appear |
+| **Idle user opacity** | Opacity for non-speaking users (0.0 ~ 1.0). Also capped at 0.2 when dangerous mode is off |
 | **Show Window** (button) | Re-show a hidden window |
 | **Reset Position** (button) | Reset window position and size to defaults |
 | **Reset All Settings** (button) | Reset all settings to factory defaults |
@@ -53,6 +56,14 @@ Click the Settings button to open:
 | `Ctrl + Shift + P` | Disable mouse passthrough (escape hatch) |
 | `Ctrl + Shift + H` | Show a hidden window (if you closed it with X) |
 
+### Mouse Passthrough Behavior
+
+When **Mouse passthrough** is enabled:
+- The main overlay window becomes non-interactive — clicks pass through to windows/game behind it.
+- The title bar and settings button are hidden on the main window (they would be non-clickable anyway).
+- The **Settings panel** remains interactive and unaffected by passthrough, so you can still adjust settings.
+- Use `Ctrl+Shift+P` to quickly disable passthrough.
+
 ### Speaker List Behavior
 
 - Recent speakers first: The list is sorted so the most recently active user is always at the top.
@@ -62,6 +73,7 @@ Click the Settings button to open:
   - Mouse passthrough is enabled, or
   - The mouse has been away from the window for 10+ seconds.
   Once you manually scroll, auto-snap is suspended until the next idle period.
+- Idle users: When "Show idle users" is enabled, non-speaking (passive) users are displayed in the list with reduced opacity. Currently-idle users who were recently speaking remain visible so you can see who was just talking.
 
 ### If the Window Is Lost or Off-Screen
 
