@@ -481,7 +481,21 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                     g_window_hidden = false;
                     glfwShowWindow(g_window);
                 }
-                ImGui::Separator();
+            }
+
+            /* ---- Reset position button ---- */
+            if (ImGui::Button(LOC("重置窗口位置", "Reset Position"), ImVec2(-1.0f, 0.0f))) {
+                overlay_config_t def = overlay_config_default();
+                g_config.window_x = def.window_x;
+                g_config.window_y = def.window_y;
+                g_config.window_width = def.window_width;
+                g_config.window_height = def.window_height;
+                glfwSetWindowPos(g_window, g_config.window_x, g_config.window_y);
+                glfwSetWindowSize(g_window, g_config.window_width, g_config.window_height);
+                if (g_window_hidden) {
+                    g_window_hidden = false;
+                    glfwShowWindow(g_window);
+                }
             }
 
             ImGui::TextWrapped(
