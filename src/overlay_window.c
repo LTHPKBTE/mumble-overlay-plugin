@@ -323,7 +323,7 @@ int overlay_window_init(const overlay_config_t *cfg) {
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
     glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);    /* no native title bar */
-    glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_TRUE);
+    glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
 
     g_window = glfwCreateWindow(g_config.window_width, g_config.window_height,
                                 "Mumble Speaking Overlay", NULL, NULL);
@@ -358,6 +358,10 @@ int overlay_window_init(const overlay_config_t *cfg) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = NULL;
+
+    /* Enable viewports so the settings panel can be a true separate OS window,
+     * not constrained by the main overlay's GLFW window boundaries. */
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
     /* Load CJK font for Chinese / Japanese characters */
     load_cjk_font();
@@ -795,8 +799,8 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         ImGui::EndChild();
     }
 
-    /* ---- Auto-size the GLFW window to fit content (every frame) ---- */
-    {
+    /* ---- Auto-size the GLFW window to fit content (every frame, skip during drag) ---- */
+    if (!g_drag_active) {
         float content_h = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y * 2.0f
                           + ImGui::GetStyle().FramePadding.y * 2.0f;
         float scale = g_config.window_scale;
@@ -986,6 +990,17 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     ImDrawData *draw_data = ImGui::GetDrawData();
     if (draw_data != NULL) {
         ImGui_ImplOpenGL3_RenderDrawData(draw_data);
+    }
+
+    /* Update and render multi-viewport (separate OS windows for settings, etc.) */
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            GLFWwindow *backup_current = glfwGetCurrentContext();
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+            glfwMakeContextCurrent(backup_current);
+        }
     }
 
     glfwSwapBuffers(g_window);
