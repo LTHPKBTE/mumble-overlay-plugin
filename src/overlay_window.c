@@ -355,7 +355,9 @@ int overlay_window_init(const overlay_config_t *cfg) {
     glfwWindowHint(GLFW_FLOATING, g_config.always_on_top ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
+    
+    /* FIX: 隐藏创建以防在任务栏闪烁，待设置完样式后再显示 */
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);    /* no native title bar */
     glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
 
@@ -369,8 +371,7 @@ int overlay_window_init(const overlay_config_t *cfg) {
     glfwSetWindowPos(g_window, g_config.window_x, g_config.window_y);
 
 #ifdef _WIN32
-    /* Remove taskbar entry: set WS_EX_TOOLWINDOW immediately after creation,
-     * before the window is ever shown, to prevent any taskbar flash. */
+    /* 在窗口显示之前立刻赋予 ToolWindow 样式，使其彻底无缘任务栏 */
     {
         HWND hwnd = glfwGetWin32Window(g_window);
         if (hwnd != NULL) {
@@ -378,8 +379,6 @@ int overlay_window_init(const overlay_config_t *cfg) {
             exstyle |= WS_EX_TOOLWINDOW;
             exstyle &= ~WS_EX_APPWINDOW;
             SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
-            /* Don't call SetWindowPos yet — just set the style.
-             * The window isn't shown until later. */
         }
     }
 #endif
@@ -449,6 +448,12 @@ int overlay_window_init(const overlay_config_t *cfg) {
 #endif
 
     g_first_frame = true;
+
+    /* FIX: 所有状态配置好后，最后显示主窗口 */
+    if (!g_window_hidden) {
+        glfwShowWindow(g_window);
+    }
+    
     return OW_OK;
 }
 
@@ -477,56 +482,32 @@ static void apply_config_to_window(void) {
     {
         HWND hwnd = glfwGetWin32Window(g_window);
         if (hwnd != NULL) {
-            /* Mouse passthrough: WS_EX_LAYERED | WS_EX_TRANSPARENT
-             * = entire window click-through regardless of pixel alpha.
-             * WS_EX_LAYERED alone = per-pixel alpha hit-test (alpha=0 passes).
-             * DO NOT call SetLayeredWindowAttributes — it would destroy
-             * the per-pixel alpha blending that makes the overlay transparent. */
             LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-            /* Always keep WS_EX_LAYERED (needed for transparent framebuffer) */
+            
             exstyle |= WS_EX_LAYERED;
             if (g_config.mouse_passthrough) {
                 exstyle |= WS_EX_TRANSPARENT;   /* full click-through */
             } else {
                 exstyle &= ~WS_EX_TRANSPARENT;  /* per-pixel hit-test */
             }
+            
+            exstyle |= WS_EX_TOOLWINDOW;
+            exstyle &= ~WS_EX_APPWINDOW;
+            
             SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
 
-            /* Ensure no taskbar entry */
-            if (!(exstyle & WS_EX_TOOLWINDOW) || (exstyle & WS_EX_APPWINDOW)) {
-                exstyle |= WS_EX_TOOLWINDOW;
-                exstyle &= ~WS_EX_APPWINDOW;
-                SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
-                SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
-                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-            }
-
-            /* Apply topmost */
+            /* FIX: 加入 SWP_FRAMECHANGED 标志是核心所在！
+             * 否则动态修改 WS_EX_TRANSPARENT (鼠标穿透) 不会被 DWM 刷新，导致属性失效。
+             * 同时也可以保证 HWND_TOPMOST 的变更强制生效。*/
             SetWindowPos(hwnd,
                          g_config.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
                          0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         }
     }
 #else
     glfwSetWindowAttrib(g_window, GLFW_MOUSE_PASSTHROUGH,
                         g_config.mouse_passthrough ? GLFW_TRUE : GLFW_FALSE);
-#endif
-}
-
-/* Helper: re-apply topmost Z-order (called every frame to resist
- * other windows stealing topmost status). */
-static void reapply_topmost(void) {
-#ifdef _WIN32
-    if (g_window != NULL) {
-        HWND hwnd = glfwGetWin32Window(g_window);
-        if (hwnd != NULL) {
-            SetWindowPos(hwnd,
-                         g_config.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
-                         0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-    }
 #endif
 }
 
@@ -1139,24 +1120,25 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     }
 
 #ifdef _WIN32
-    /* Force all ImGui viewport windows (including settings) to tool windows
-     * without taskbar entries. Re-apply every frame because viewport creation
-     * may temporarily show a normal window. */
+    /* FIX: ImGui 的 PlatformHandle 保存的是 GLFWwindow*，绝不能直接强转为 HWND，
+     * 否则获取不到真实的系统句柄，导致任务栏无法隐藏设置窗口。*/
     {
         ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
         for (int i = 0; i < pio.Viewports.Size; i++) {
             ImGuiViewport* vp = pio.Viewports[i];
             if (vp->PlatformHandle != NULL) {
-                HWND hwnd = (HWND)vp->PlatformHandle;
-                LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-                LONG_PTR needed = exstyle | WS_EX_TOOLWINDOW;
-                needed &= ~WS_EX_APPWINDOW;
-                if (exstyle != needed) {
-                    SetWindowLongPtr(hwnd, GWL_EXSTYLE, needed);
-                    /* SWP_FRAMECHANGED with NOACTIVATE / NOREDRAW to avoid flash */
-                    SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
-                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
-                                 | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOREDRAW);
+                HWND hwnd = glfwGetWin32Window((GLFWwindow*)vp->PlatformHandle);
+                if (hwnd != NULL) {
+                    LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+                    LONG_PTR needed = exstyle | WS_EX_TOOLWINDOW;
+                    needed &= ~WS_EX_APPWINDOW;
+                    if (exstyle != needed) {
+                        SetWindowLongPtr(hwnd, GWL_EXSTYLE, needed);
+                        /* SWP_FRAMECHANGED with NOACTIVATE / NOREDRAW to avoid flash */
+                        SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+                                     | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOREDRAW);
+                    }
                 }
             }
         }
@@ -1164,11 +1146,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
 #endif
 
     glfwSwapBuffers(g_window);
-
-    /* Re-apply topmost every frame — other windows may steal TOPMOST status */
-    if (g_config.always_on_top) {
-        reapply_topmost();
-    }
 
     /* Track window position / size for config persistence */
     glfwGetWindowPos(g_window, &g_config.window_x, &g_config.window_y);
