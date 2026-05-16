@@ -88,6 +88,16 @@ static float   g_last_scroll_y            = 0.0f;  /* last known scroll position
 static uint32_t g_user_timestamps[64];      /* ordered user IDs by speaking recency */
 static int     g_user_timestamp_count     = 0;
 
+/* ---- Drag state (smooth window dragging) ---- */
+static bool    g_drag_active  = false;
+static int     g_drag_win_x   = 0;
+static int     g_drag_win_y   = 0;
+static float   g_drag_mouse_x = 0.0f;
+static float   g_drag_mouse_y = 0.0f;
+
+/* ---- Height auto-sizing ---- */
+static int     g_last_content_h = 0;
+
 /* ---- Forward declarations ---- */
 static void apply_config_to_window(void);
 static void on_window_close(GLFWwindow *win);
@@ -345,10 +355,6 @@ int overlay_window_init(const overlay_config_t *cfg) {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = NULL;
 
-#ifdef IMGUI_HAS_DOCK
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-#endif
-
     /* Load CJK font for Chinese / Japanese characters */
     load_cjk_font();
 
@@ -472,21 +478,17 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     }
 
     /* ================================================================
-     * Main overlay panel — fills the entire GLFW window
+     * Main overlay panel — auto-sized to fit content
      * ================================================================ */
-    int display_w, display_h;
-    glfwGetWindowSize(g_window, &display_w, &display_h);
-
-    ImGuiCond pos_cond = g_first_frame ? ImGuiCond_FirstUseEver : ImGuiCond_Always;
-    ImGui::SetNextWindowPos(ImVec2(0, 0), pos_cond, ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImVec2((float)display_w, (float)display_h), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always, ImVec2(0, 0));
 
     ImGuiWindowFlags main_flags = ImGuiWindowFlags_NoTitleBar
                                 | ImGuiWindowFlags_NoResize
                                 | ImGuiWindowFlags_NoMove
                                 | ImGuiWindowFlags_NoCollapse
                                 | ImGuiWindowFlags_NoBringToFrontOnFocus
-                                | ImGuiWindowFlags_NoSavedSettings;
+                                | ImGuiWindowFlags_NoSavedSettings
+                                | ImGuiWindowFlags_AlwaysAutoResize;
 
     /* When mouse passthrough is active, make main panel non-interactive
      * so clicks fall through to windows behind. The settings window is
@@ -539,35 +541,39 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         }
 
         /* ---- Full-width drag handling ---- */
-        /* The invisible hit area starts at title_pos and spans the full width */
-        ImVec2 drag_min = ImVec2(title_pos.x, title_pos.y - 2.0f);
-        ImVec2 drag_max = ImVec2(title_pos.x + avail_w, title_pos.y + title_h);
-        ImGui::SetCursorScreenPos(drag_min);
+        /* Track drag relative to initial mouse position for smooth movement */
+        {
+            ImVec2 drag_min = ImVec2(title_pos.x, title_pos.y - 2.0f);
+            ImGui::SetCursorScreenPos(drag_min);
+            ImGui::InvisibleButton("##title_drag", ImVec2(avail_w, title_h));
+            bool hovered = ImGui::IsItemHovered();
+            bool active  = ImGui::IsItemActive();
 
-        /* Use a dummy + InvisibleButton to capture clicks/drags */
-        ImGui::InvisibleButton("##title_drag", ImVec2(avail_w, title_h));
-        bool drag_hovered = ImGui::IsItemHovered();
-        bool drag_active = ImGui::IsItemActive();
+            if (hovered) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
 
-        if (drag_hovered) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        }
+            if (ImGui::IsItemActivated()) {
+                g_drag_active = true;
+                glfwGetWindowPos(g_window, &g_drag_win_x, &g_drag_win_y);
+                ImVec2 mouse = ImGui::GetIO().MousePos;
+                g_drag_mouse_x = mouse.x;
+                g_drag_mouse_y = mouse.y;
+            }
 
-        if (drag_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-            ImVec2 delta = ImGui::GetIO().MouseDelta;
-            int cur_x, cur_y;
-            glfwGetWindowPos(g_window, &cur_x, &cur_y);
-            int new_x = cur_x + (int)delta.x;
-            int new_y = cur_y + (int)delta.y;
+            if (g_drag_active && active) {
+                ImVec2 mouse = ImGui::GetIO().MousePos;
+                int dx = (int)(mouse.x - g_drag_mouse_x);
+                int dy = (int)(mouse.y - g_drag_mouse_y);
+                int new_x = g_drag_win_x + dx;
+                int new_y = g_drag_win_y + dy;
 
-            /* Clamp to screen edges */
-            int fb_x, fb_y, fb_w, fb_h;
-            glfwGetWindowPos(g_window, &fb_x, &fb_y);
-            glfwGetWindowSize(g_window, &fb_w, &fb_h);
-            GLFWmonitor *monitor = glfwGetWindowMonitor(g_window);
-            if (!monitor) {
+                /* Clamp to screen edges */
+                int fb_w, fb_h;
+                glfwGetWindowSize(g_window, &fb_w, &fb_h);
                 int mon_count;
                 GLFWmonitor **mons = glfwGetMonitors(&mon_count);
+                GLFWmonitor *monitor = NULL;
                 int best_area = -1;
                 for (int mi = 0; mi < mon_count; mi++) {
                     int mx, my, mw, mh;
@@ -584,19 +590,23 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                         monitor = mons[mi];
                     }
                 }
+                if (monitor) {
+                    int mx, my, mw, mh;
+                    glfwGetMonitorWorkarea(monitor, &mx, &my, &mw, &mh);
+                    int min_visible = fb_w / 5;
+                    if (new_x + min_visible < mx) new_x = mx - min_visible;
+                    if (new_x + fb_w - min_visible > mx + mw) new_x = mx + mw - fb_w + min_visible;
+                    if (new_y < my) new_y = my;
+                    if (new_y + 20 > my + mh) new_y = my + mh - 20;
+                }
+                g_config.window_x = new_x;
+                g_config.window_y = new_y;
+                glfwSetWindowPos(g_window, new_x, new_y);
             }
-            if (monitor) {
-                int mx, my, mw, mh;
-                glfwGetMonitorWorkarea(monitor, &mx, &my, &mw, &mh);
-                int min_visible = fb_w / 5;
-                if (new_x + min_visible < mx) new_x = mx - min_visible;
-                if (new_x + fb_w - min_visible > mx + mw) new_x = mx + mw - fb_w + min_visible;
-                if (new_y < my) new_y = my;
-                if (new_y + 20 > my + mh) new_y = my + mh - 20;
+
+            if (!active) {
+                g_drag_active = false;
             }
-            g_config.window_x = new_x;
-            g_config.window_y = new_y;
-            glfwSetWindowPos(g_window, new_x, new_y);
         }
     }
 
@@ -781,15 +791,21 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         ImGui::EndChild();
     }
 
-    /* ---- Auto-size the window to fit content on first frame ---- */
-    if (g_first_frame) {
-        float content_h = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+    /* ---- Auto-size the GLFW window to fit content (every frame) ---- */
+    {
+        float content_h = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y * 2.0f
+                          + ImGui::GetStyle().FramePadding.y * 2.0f;
         float scale = g_config.window_scale;
         if (scale < 0.01f) scale = 1.0f;
         int target_h = (int)(content_h / scale + 0.5f);
         if (target_h < 40) target_h = 40;
-        int target_w = 280;
-        glfwSetWindowSize(g_window, target_w, target_h);
+        int target_w = (int)(260.0f / scale + 0.5f);
+        if (target_w < 180) target_w = 180;
+        int cur_w, cur_h;
+        glfwGetWindowSize(g_window, &cur_w, &cur_h);
+        if (abs(target_h - cur_h) > 1 || abs(target_w - cur_w) > 1) {
+            glfwSetWindowSize(g_window, target_w, target_h);
+        }
         g_config.window_width = target_w;
         g_config.window_height = target_h;
         g_first_frame = false;
@@ -838,14 +854,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             {
                 ImGuiIO& io = ImGui::GetIO();
                 io.FontGlobalScale = g_config.window_scale;
-                /* Also resize the GLFW window to match the new scale */
-                int base_w = (int)((float)g_config.window_width / g_config.window_scale + 0.5f);
-                int base_h = (int)((float)g_config.window_height / g_config.window_scale + 0.5f);
-                if (base_w < 100) base_w = 100;
-                if (base_h < 100) base_h = 100;
-                int new_w = (int)((float)base_w * g_config.window_scale + 0.5f);
-                int new_h = (int)((float)base_h * g_config.window_scale + 0.5f);
-                glfwSetWindowSize(g_window, new_w, new_h);
             }
 
             ImGui::Separator();
