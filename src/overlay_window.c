@@ -99,6 +99,16 @@ static float   g_drag_mouse_y = 0.0f;
 /* ---- Height auto-sizing ---- */
 static int     g_last_content_h = 0;
 
+/* ---- Global keyboard hook (Windows only) ---- */
+#ifdef _WIN32
+static HHOOK  g_keyboard_hook     = NULL;
+/* Thread-safe flags set by the keyboard hook, read by render thread */
+static volatile LONG g_hotkey_toggle_passthrough = 0;
+static volatile LONG g_hotkey_show_window        = 0;
+
+static LRESULT CALLBACK low_level_keyboard_proc(int nCode, WPARAM wParam, LPARAM lParam);
+#endif
+
 /* ---- Forward declarations ---- */
 static void apply_config_to_window(void);
 static void on_window_close(GLFWwindow *win);
@@ -160,6 +170,29 @@ static void load_cjk_font(void) {
     /* No CJK font found – not a fatal error; non-ASCII will show as fallback */
     fprintf(stderr, "No CJK font found, non-ASCII glyphs unavailable\n");
 }
+
+/* ========================================================================
+ * Global hotkey — low-level keyboard hook (Windows only)
+ * ======================================================================== */
+#ifdef _WIN32
+static LRESULT CALLBACK low_level_keyboard_proc(int nCode, WPARAM wParam, LPARAM lParam) {
+    if (nCode == HC_ACTION) {
+        KBDLLHOOKSTRUCT *kb = (KBDLLHOOKSTRUCT *)lParam;
+        if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
+            bool ctrl  = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+            bool shift = (GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0;
+            if (ctrl && shift) {
+                if (kb->vkCode == 'P') {
+                    InterlockedExchange(&g_hotkey_toggle_passthrough, 1);
+                } else if (kb->vkCode == 'H') {
+                    InterlockedExchange(&g_hotkey_show_window, 1);
+                }
+            }
+        }
+    }
+    return CallNextHookEx(NULL, nCode, wParam, lParam);
+}
+#endif
 
 /* ========================================================================
  * Configuration defaults
@@ -336,7 +369,8 @@ int overlay_window_init(const overlay_config_t *cfg) {
     glfwSetWindowPos(g_window, g_config.window_x, g_config.window_y);
 
 #ifdef _WIN32
-    /* Remove taskbar entry by switching to WS_EX_TOOLWINDOW */
+    /* Remove taskbar entry: set WS_EX_TOOLWINDOW immediately after creation,
+     * before the window is ever shown, to prevent any taskbar flash. */
     {
         HWND hwnd = glfwGetWin32Window(g_window);
         if (hwnd != NULL) {
@@ -344,8 +378,8 @@ int overlay_window_init(const overlay_config_t *cfg) {
             exstyle |= WS_EX_TOOLWINDOW;
             exstyle &= ~WS_EX_APPWINDOW;
             SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
-            SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            /* Don't call SetWindowPos yet — just set the style.
+             * The window isn't shown until later. */
         }
     }
 #endif
@@ -399,6 +433,21 @@ int overlay_window_init(const overlay_config_t *cfg) {
     /* Install close callback AFTER ImGui_ImplGlfw_InitForOpenGL so it doesn't get overwritten */
     glfwSetWindowCloseCallback(g_window, on_window_close);
 
+    /* Apply full config (topmost, passthrough, taskbar style) right after creation */
+    apply_config_to_window();
+
+#ifdef _WIN32
+    /* Install global low-level keyboard hook for Ctrl+Shift+P / Ctrl+Shift+H.
+     * Must be done on the same thread that will pump messages (render thread). */
+    g_keyboard_hook = SetWindowsHookEx(WH_KEYBOARD_LL, low_level_keyboard_proc,
+                                       GetModuleHandle(NULL), 0);
+    if (g_keyboard_hook == NULL) {
+        fprintf(stderr, "Failed to install global keyboard hook (error %lu)\n",
+                (unsigned long)GetLastError());
+        /* Non-fatal: overlay still works, just global hotkeys won't */
+    }
+#endif
+
     g_first_frame = true;
     return OW_OK;
 }
@@ -423,12 +472,53 @@ static void apply_config_to_window(void) {
 
     glfwSetWindowAttrib(g_window, GLFW_FLOATING,
                         g_config.always_on_top ? GLFW_TRUE : GLFW_FALSE);
-    glfwSetWindowAttrib(g_window, GLFW_MOUSE_PASSTHROUGH,
-                        g_config.mouse_passthrough ? GLFW_TRUE : GLFW_FALSE);
 
 #ifdef _WIN32
-    /* On Windows, also set WS_EX_TOPMOST for reliable always-on-top */
     {
+        HWND hwnd = glfwGetWin32Window(g_window);
+        if (hwnd != NULL) {
+            /* Mouse passthrough: WS_EX_LAYERED | WS_EX_TRANSPARENT
+             * = entire window click-through regardless of pixel alpha.
+             * WS_EX_LAYERED alone = per-pixel alpha hit-test (alpha=0 passes).
+             * DO NOT call SetLayeredWindowAttributes — it would destroy
+             * the per-pixel alpha blending that makes the overlay transparent. */
+            LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+            /* Always keep WS_EX_LAYERED (needed for transparent framebuffer) */
+            exstyle |= WS_EX_LAYERED;
+            if (g_config.mouse_passthrough) {
+                exstyle |= WS_EX_TRANSPARENT;   /* full click-through */
+            } else {
+                exstyle &= ~WS_EX_TRANSPARENT;  /* per-pixel hit-test */
+            }
+            SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
+
+            /* Ensure no taskbar entry */
+            if (!(exstyle & WS_EX_TOOLWINDOW) || (exstyle & WS_EX_APPWINDOW)) {
+                exstyle |= WS_EX_TOOLWINDOW;
+                exstyle &= ~WS_EX_APPWINDOW;
+                SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
+                SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            }
+
+            /* Apply topmost */
+            SetWindowPos(hwnd,
+                         g_config.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
+                         0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    }
+#else
+    glfwSetWindowAttrib(g_window, GLFW_MOUSE_PASSTHROUGH,
+                        g_config.mouse_passthrough ? GLFW_TRUE : GLFW_FALSE);
+#endif
+}
+
+/* Helper: re-apply topmost Z-order (called every frame to resist
+ * other windows stealing topmost status). */
+static void reapply_topmost(void) {
+#ifdef _WIN32
+    if (g_window != NULL) {
         HWND hwnd = glfwGetWin32Window(g_window);
         if (hwnd != NULL) {
             SetWindowPos(hwnd,
@@ -465,15 +555,30 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    /* ---- Keyboard shortcuts (checked every frame via ImGui key API, works regardless of focus) ---- */
+    /* ---- Process global keyboard shortcuts (Ctrl+Shift+P / Ctrl+Shift+H) ---- */
+#ifdef _WIN32
+    if (InterlockedCompareExchange(&g_hotkey_toggle_passthrough, 0, 1) == 1) {
+        g_config.mouse_passthrough = !g_config.mouse_passthrough;
+        apply_config_to_window();
+    }
+    if (InterlockedCompareExchange(&g_hotkey_show_window, 0, 1) == 1) {
+        if (g_window_hidden) {
+            g_window_hidden = false;
+            g_user_hid_window = false;
+            g_user_saw_speaking_after_hide = false;
+            glfwShowWindow(g_window);
+        }
+    }
+#else
+    /* Fallback: ImGui key polling (only works when GLFW window has focus) */
     {
         ImGuiIO& io = ImGui::GetIO();
         bool ctrl  = io.KeyCtrl  || ImGui::IsKeyDown(ImGuiKey_LeftCtrl)  || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
         bool shift = io.KeyShift || ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
 
-        /* Ctrl+Shift+P -> disable mouse passthrough */
-        if (ImGui::IsKeyPressed(ImGuiKey_P) && ctrl && shift && g_config.mouse_passthrough) {
-            g_config.mouse_passthrough = false;
+        /* Ctrl+Shift+P -> toggle mouse passthrough */
+        if (ImGui::IsKeyPressed(ImGuiKey_P) && ctrl && shift) {
+            g_config.mouse_passthrough = !g_config.mouse_passthrough;
             apply_config_to_window();
         }
         /* Ctrl+Shift+H → show hidden window */
@@ -484,6 +589,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             glfwShowWindow(g_window);
         }
     }
+#endif
     /* ---- Handle request flags (set from Mumble main thread) ---- */
     if (g_request_show && g_window_hidden) {
         g_request_show = false;
@@ -572,11 +678,15 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         }
 
         /* ---- Full-width drag handling ---- */
-        /* Track drag relative to initial mouse position for smooth movement */
+        /* The drag area covers from the left edge of the title bar up to
+           where the Settings/Close buttons start, so the buttons aren't
+           swallowed by the drag handler. */
         {
+            float drag_w = btn_x - title_pos.x;
+            if (drag_w < 20.0f) drag_w = 20.0f;
             ImVec2 drag_min = ImVec2(title_pos.x, title_pos.y - 2.0f);
             ImGui::SetCursorScreenPos(drag_min);
-            ImGui::InvisibleButton("##title_drag", ImVec2(avail_w, title_h));
+            ImGui::InvisibleButton("##title_drag", ImVec2(drag_w, title_h));
             bool hovered = ImGui::IsItemHovered();
             bool active  = ImGui::IsItemActive();
 
@@ -1029,9 +1139,9 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     }
 
 #ifdef _WIN32
-    /* Force all ImGui viewport windows (including main + settings) to tool windows
-     * without taskbar entries. Re-apply every frame because viewport creation may
-     * temporarily show a normal window. */
+    /* Force all ImGui viewport windows (including settings) to tool windows
+     * without taskbar entries. Re-apply every frame because viewport creation
+     * may temporarily show a normal window. */
     {
         ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
         for (int i = 0; i < pio.Viewports.Size; i++) {
@@ -1039,15 +1149,14 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             if (vp->PlatformHandle != NULL) {
                 HWND hwnd = (HWND)vp->PlatformHandle;
                 LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-                if (!(exstyle & WS_EX_TOOLWINDOW)) {
-                    /* Hide briefly to avoid taskbar flash when changing style */
-                    ShowWindow(hwnd, SW_HIDE);
-                    exstyle |= WS_EX_TOOLWINDOW;
-                    exstyle &= ~WS_EX_APPWINDOW;
-                    SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
+                LONG_PTR needed = exstyle | WS_EX_TOOLWINDOW;
+                needed &= ~WS_EX_APPWINDOW;
+                if (exstyle != needed) {
+                    SetWindowLongPtr(hwnd, GWL_EXSTYLE, needed);
+                    /* SWP_FRAMECHANGED with NOACTIVATE / NOREDRAW to avoid flash */
                     SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
-                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-                    ShowWindow(hwnd, SW_SHOW);
+                                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+                                 | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOREDRAW);
                 }
             }
         }
@@ -1055,6 +1164,11 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
 #endif
 
     glfwSwapBuffers(g_window);
+
+    /* Re-apply topmost every frame — other windows may steal TOPMOST status */
+    if (g_config.always_on_top) {
+        reapply_topmost();
+    }
 
     /* Track window position / size for config persistence */
     glfwGetWindowPos(g_window, &g_config.window_x, &g_config.window_y);
@@ -1067,6 +1181,14 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
  * Shutdown
  * ======================================================================== */
 void overlay_window_shutdown(void) {
+#ifdef _WIN32
+    /* Unregister global keyboard hook */
+    if (g_keyboard_hook != NULL) {
+        UnhookWindowsHookEx(g_keyboard_hook);
+        g_keyboard_hook = NULL;
+    }
+#endif
+
     if (g_window != NULL) {
         /* Save current config before destroying */
         overlay_config_save();

@@ -15,6 +15,7 @@
 #define OW_OK         0
 #define OW_ERR_GLFW   1
 #define OW_ERR_IMGUI  2
+#define OW_ERR_HOTKEY 3
 
 /*
  * Runtime configuration for the overlay window.
@@ -43,6 +44,7 @@ overlay_config_t overlay_config_default(void);
 
 /*
  * Initialise GLFW, create window, set up OpenGL + cimgui.
+ * Also registers global hotkeys (Ctrl+Shift+P, Ctrl+Shift+H).
  * Returns OW_OK on success.
  */
 int  overlay_window_init(const overlay_config_t *cfg);
@@ -75,6 +77,7 @@ void overlay_window_request_reset_position(void);
 
 /*
  * Tear down cimgui, destroy GLFW window, terminate GLFW.
+ * Also unregisters global hotkeys.
  */
 void overlay_window_shutdown(void);
 
