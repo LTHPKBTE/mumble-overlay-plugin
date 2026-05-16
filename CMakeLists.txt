@@ -97,7 +97,6 @@ target_compile_definitions(cimgui PUBLIC
     CIMGUI_USE_GLFW
     CIMGUI_USE_OPENGL3
     IMGUI_DISABLE_DEMO_WINDOWS
-    IMGUI_IMPL_API="extern \"C\""
 )
 
 if(WIN32)
