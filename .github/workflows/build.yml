@@ -1,0 +1,150 @@
+name: CI / Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  # ==============================================================
+  # Windows — MSVC, build plugin.dll
+  # ==============================================================
+  build-windows:
+    name: Windows (MSVC)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup CMake & MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload plugin.dll
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-windows-x64
+          path: build/Release/plugin.dll
+          if-no-files-found: error
+
+      - name: Standalone test (skeleton)
+        run: cmake -B build_test -G "Visual Studio 17 2022" -A x64 -DOVERLAY_BUILD_STANDALONE=ON
+        continue-on-error: true
+
+  # ==============================================================
+  # Linux — GCC, build libplugin.so
+  # ==============================================================
+  build-linux:
+    name: Linux (GCC)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Upload libplugin.so
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-linux-x64
+          path: build/libplugin.so
+          if-no-files-found: error
+
+  # ==============================================================
+  # macOS — Clang, build libplugin.dylib
+  # ==============================================================
+  build-macos:
+    name: macOS (Clang)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Upload libplugin.dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-macos-x64
+          path: build/libplugin.dylib
+          if-no-files-found: error
+
+  # ==============================================================
+  # Release — package all artifacts into .mumble_plugin bundle
+  # (only on tag push)
+  # ==============================================================
+  release:
+    name: Create Release
+    needs: [build-windows, build-linux, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release bundle
+        run: |
+          mkdir -p release
+          # Copy manifest
+          cp manifest.xml release/
+          # Copy platform binaries
+          cp artifacts/plugin-windows-x64/plugin.dll    release/plugin.dll    2>/dev/null || true
+          cp artifacts/plugin-linux-x64/libplugin.so    release/libplugin.so  2>/dev/null || true
+          cp artifacts/plugin-macos-x64/libplugin.dylib release/libplugin.dylib 2>/dev/null || true
+          # Create .mumble_plugin zip
+          cd release
+          zip ../SpeakingUsersOverlay.mumble_plugin manifest.xml plugin.dll libplugin.so libplugin.dylib 2>/dev/null || true
+          cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SpeakingUsersOverlay.mumble_plugin
+            artifacts/plugin-windows-x64/plugin.dll
+            artifacts/plugin-linux-x64/libplugin.so
+            artifacts/plugin-macos-x64/libplugin.dylib
+          body: |
+            ## 安装方法
+            1. 下载 `SpeakingUsersOverlay.mumble_plugin`
+            2. 在 Mumble 中打开插件管理器
+            3. 点击 "安装插件" 并选择下载的文件
+
+            ## 功能
+            - 实时显示正在说话/密语/喊话的用户列表
+            - 可调节窗口透明度
+            - 窗口置顶 + 鼠标穿透模式
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

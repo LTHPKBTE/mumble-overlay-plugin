@@ -53,3 +53,29 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# ============================================================
+# SpeakingUsersOverlay 插件专用
+# ============================================================
+
+# CMake 构建产物
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+
+# IDE / 编辑器
+.vs/
+.idea/
+*.user
+
+# 子模块 (需要手动克隆到项目目录)
+cimgui/
+glfw/
+
+# 插件打包
+*.mumble_plugin
+
+# 配置文件
+SpeakingUsersOverlay.json
