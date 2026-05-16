@@ -94,7 +94,7 @@
 
 ## 预构建二进制文件
 
-可以从 GitHub 仓库的 **Actions** 标签页下载预构建的 `.mumble_plugin` 文件。找到最近一次成功的构建，滚动到 **Artifacts** 部分，下载 `SpeakingUsersOverlay.mumble_plugin`，双击即可安装到 Mumble。
+可以从 GitHub 仓库的 **Actions** 标签页下载各平台的预构建文件。找到最近一次成功的构建，滚动到 **Artifacts** 部分，下载对应平台的压缩包（例如 `plugin-windows.zip`、`plugin-linux.tar.gz` 或 `plugin-macos.tar.gz`），解压后按照下面的[安装教程](#4-安装到-mumble)操作。
 
 > 预构建文件仅为了方便使用。如有安全顾虑，强烈建议审查源码并自行构建。
 
@@ -128,7 +128,7 @@ cmake --build build
 
 ### 4. 安装到 Mumble
 
-**推荐方法 — 使用 Mumble 插件管理器：**
+**使用 Mumble 插件管理器：**
 1. 打开 Mumble，进入 **设置 > 插件**，点击 **安装插件**。
 2. 选择编译好的 `plugin.dll` (Windows)、`libplugin.so` (Linux) 或 `libplugin.dylib` (macOS)。
 3. 在列表中启用插件。
@@ -138,11 +138,13 @@ cmake --build build
 - Linux：  将 `libplugin.so` 复制到 `~/.local/share/Mumble/Plugins/`
 - macOS：  将 `libplugin.dylib` 复制到 `~/Library/Application Support/Mumble/Plugins/`
 
-**打包为 .mumble_plugin（便携式安装）：**
+**打包为 .mumble_plugin（可选）：**
 ```bash
 zip SpeakingUsersOverlay.mumble_plugin plugin.dll manifest.xml
 ```
-双击 `.mumble_plugin` 文件，或在 **设置 > 插件 > 安装插件** 中选择。
+双击 `.mumble_plugin` 文件或用 **设置 > 插件 > 安装插件**。
+
+> 以上**第 4 步**的安装说明同样适用于自行构建和预构建的二进制文件。
 
 ## 架构
 

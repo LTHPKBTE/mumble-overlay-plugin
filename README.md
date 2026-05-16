@@ -2,6 +2,8 @@
 
 Overlay plugin that displays a real-time list of users currently speaking on a Mumble server.
 
+[>>查看中文说明<<](./README_CN.md)
+
 ## Features
 
 - Real-time display of talking / whispering / shouting users
@@ -94,7 +96,7 @@ Saved config location:
 
 ## Prebuilt Binary
 
-You can download a prebuilt `.mumble_plugin` from the **Actions** tab of the GitHub repository. Look for the latest successful workflow run, scroll to **Artifacts**, and download `SpeakingUsersOverlay.mumble_plugin`. Double-click the file to install it into Mumble.
+Prebuilt binaries for each platform are available from the **Actions** tab of the GitHub repository. Look for the latest successful workflow run, scroll to **Artifacts**, and download the archive for your platform (e.g. `plugin-windows.zip`, `plugin-linux.tar.gz`, or `plugin-macos.tar.gz`). Extract the plugin file and follow the [installation instructions](#4-install-to-mumble) below.
 
 > Prebuilt binaries are provided for convenience. It is strongly recommended to review the source code and build from source if you have any security concerns.
 
@@ -128,7 +130,7 @@ cmake --build build
 
 ### 4. Install to Mumble
 
-**Using Mumble's plugin manager (recommended):**
+**Using Mumble's plugin manager:**
 1. Open Mumble, go to **Settings > Plugins**. Click **Install Plugin**.
 2. Select the compiled `plugin.dll` (Windows), `libplugin.so` (Linux), or `libplugin.dylib` (macOS).
 3. Enable the plugin in the list.
@@ -138,11 +140,13 @@ cmake --build build
 - Linux:   Copy `libplugin.so` to `~/.local/share/Mumble/Plugins/`
 - macOS:   Copy `libplugin.dylib` to `~/Library/Application Support/Mumble/Plugins/`
 
-**Bundle as .mumble_plugin (portable):**
+**Bundle as .mumble_plugin (optional):**
 ```bash
 zip SpeakingUsersOverlay.mumble_plugin plugin.dll manifest.xml
 ```
 Double-click the `.mumble_plugin` file or use **Settings > Plugins > Install Plugin**.
+
+> The installation steps above (**Step 4**) apply to both self-built and prebuilt binaries.
 
 ## Architecture
 
