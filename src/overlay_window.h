@@ -54,6 +54,18 @@ typedef int (*overlay_poll_speakers_fn)(void *userdata,
 bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata);
 
 /*
+ * Request the overlay to become visible (e.g. after being hidden).
+ * Thread-safe: only sets a flag, read by the render thread.
+ */
+void overlay_window_request_show(void);
+
+/*
+ * Request the overlay window position to be reset to defaults.
+ * Thread-safe: only sets a flag, read by the render thread.
+ */
+void overlay_window_request_reset_position(void);
+
+/*
  * Tear down cimgui, destroy GLFW window, terminate GLFW.
  */
 void overlay_window_shutdown(void);
