@@ -1,5 +1,5 @@
 /*
- * overlay_window.c — GLFW + cimgui overlay window implementation
+ * overlay_window.c — GLFW + Dear ImGui overlay window implementation
  *
  * Creates a floating overlay with:
  *   - Transparency control (alpha slider)
@@ -8,21 +8,10 @@
  *   - Live list of currently speaking users
  *   - System language detection for UI strings
  *
- * Uses cimgui (Dear ImGui C bindings).
+ * Uses Dear ImGui C++ API directly.
  */
 
-/* ---- Must be defined BEFORE including cimgui.h ---- */
-#ifndef CIMGUI_DEFINE_ENUMS_AND_STRUCTS
-#define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
-#endif
-#ifndef CIMGUI_USE_GLFW
-#define CIMGUI_USE_GLFW
-#endif
-#ifndef CIMGUI_USE_OPENGL3
-#define CIMGUI_USE_OPENGL3
-#endif
-
-#include "cimgui.h"
+#include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
@@ -31,9 +20,6 @@
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #define GL_SILENCE_DEPRECATION
 #endif
-
-/* macro alias — cimgui v1.92+ uses igGetIO_Nil */
-#define igGetIO igGetIO_Nil
 
 #include <GLFW/glfw3.h>
 
@@ -86,21 +72,6 @@ static GLFWwindow      *g_window         = NULL;
 static overlay_config_t g_config;
 static bool             g_settings_open  = false;
 static bool             g_first_frame    = true;
-
-/* ========================================================================
- * Helper: make an ImVec2_c / ImVec4_c
- * ======================================================================== */
-static inline ImVec2_c mkvec2(float x, float y) {
-    ImVec2_c v;
-    v.x = x; v.y = y;
-    return v;
-}
-
-static inline ImVec4_c mkvec4(float x, float y, float z, float w) {
-    ImVec4_c v;
-    v.x = x; v.y = y; v.z = z; v.w = w;
-    return v;
-}
 
 /* ========================================================================
  * Configuration defaults
@@ -165,22 +136,23 @@ int overlay_window_init(const overlay_config_t *cfg) {
     glfwMakeContextCurrent(g_window);
     glfwSwapInterval(1);
 
-    /* --- cimgui --- */
-    igCreateContext(NULL);
-    ImGuiIO *io = igGetIO();
-    io->IniFilename = NULL;
+    /* --- Dear ImGui --- */
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = NULL;
 
 #ifdef IMGUI_HAS_DOCK
-    io->ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 #endif
 
-    ImGuiStyle *style = igGetStyle();
-    igStyleColorsDark(NULL);
-    style->Alpha = g_config.alpha;
+    ImGuiStyle& style = ImGui::GetStyle();
+    ImGui::StyleColorsDark();
+    style.Alpha = g_config.alpha;
 
     /* --- Backend init --- */
     if (!ImGui_ImplGlfw_InitForOpenGL(g_window, true)) {
-        igDestroyContext(NULL);
+        ImGui::DestroyContext();
         glfwDestroyWindow(g_window);
         glfwTerminate();
         return OW_ERR_IMGUI;
@@ -194,7 +166,7 @@ int overlay_window_init(const overlay_config_t *cfg) {
 
     if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
         ImGui_ImplGlfw_Shutdown();
-        igDestroyContext(NULL);
+        ImGui::DestroyContext();
         glfwDestroyWindow(g_window);
         glfwTerminate();
         return OW_ERR_IMGUI;
@@ -208,8 +180,8 @@ int overlay_window_init(const overlay_config_t *cfg) {
  * Apply current config to the GLFW window
  * ======================================================================== */
 static void apply_config_to_window(void) {
-    ImGuiStyle *style = igGetStyle();
-    style->Alpha = g_config.alpha;
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.Alpha = g_config.alpha;
 
     glfwSetWindowAttrib(g_window, GLFW_FLOATING,
                         g_config.always_on_top ? GLFW_TRUE : GLFW_FALSE);
@@ -231,31 +203,31 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
-    igNewFrame();
+    ImGui::NewFrame();
 
     /* ================================================================
      * Settings panel
      * ================================================================ */
     if (g_settings_open) {
-        igSetNextWindowSize(mkvec2(300, 200), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_FirstUseEver);
         bool show = true;
-        if (igBegin(LOC("设置", "Settings"), &show, ImGuiWindowFlags_None)) {
-            igSliderFloat(LOC("透明度", "Transparency"), &g_config.alpha,
+        if (ImGui::Begin(LOC("设置", "Settings"), &show, ImGuiWindowFlags_None)) {
+            ImGui::SliderFloat(LOC("透明度", "Transparency"), &g_config.alpha,
                           0.1f, 1.0f, "%.2f", ImGuiSliderFlags_None);
-            igCheckbox(LOC("鼠标穿透", "Mouse passthrough"), &g_config.mouse_passthrough);
-            igCheckbox(LOC("窗口置顶", "Always on top"), &g_config.always_on_top);
+            ImGui::Checkbox(LOC("鼠标穿透", "Mouse passthrough"), &g_config.mouse_passthrough);
+            ImGui::Checkbox(LOC("窗口置顶", "Always on top"), &g_config.always_on_top);
             apply_config_to_window();
 
-            igSeparator();
+            ImGui::Separator();
 
-            igTextWrapped(
+            ImGui::TextWrapped(
                 LOC("拖拽窗口标题栏来移动位置。\n"
                     "关闭此窗口不会停止插件。",
                     "Drag the title bar to move.\n"
                     "Closing this window does not stop the plugin.")
             );
         }
-        igEnd();
+        ImGui::End();
 
         if (!show) {
             g_settings_open = false;
@@ -269,8 +241,8 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     glfwGetWindowSize(g_window, &display_w, &display_h);
 
     ImGuiCond pos_cond = g_first_frame ? ImGuiCond_FirstUseEver : ImGuiCond_Always;
-    igSetNextWindowPos(mkvec2(0, 0), pos_cond, mkvec2(0, 0));
-    igSetNextWindowSize(mkvec2((float)display_w, (float)display_h), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(0, 0), pos_cond, ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2((float)display_w, (float)display_h), ImGuiCond_Always);
 
     ImGuiWindowFlags main_flags = ImGuiWindowFlags_NoTitleBar
                                 | ImGuiWindowFlags_NoResize
@@ -279,21 +251,21 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                                 | ImGuiWindowFlags_NoBringToFrontOnFocus
                                 | ImGuiWindowFlags_NoSavedSettings;
 
-    igBegin("SpeakingOverlayMain", NULL, main_flags);
+    ImGui::Begin("SpeakingOverlayMain", NULL, main_flags);
 
     /* ---- Header line: title + settings button ---- */
-    igTextColored(mkvec4(1.0f, 1.0f, 1.0f, 1.0f), LOC("说话列表", "Speaking Users"));
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), LOC("说话列表", "Speaking Users"));
 
-    igSameLine(0.0f, -1.0f);
-    float cursor_x = igGetCursorPosX();
-    ImVec2_c avail = igGetContentRegionAvail();
-    igSetCursorPosX(cursor_x + avail.x - 80.0f);
+    ImGui::SameLine(0.0f, -1.0f);
+    float cursor_x = ImGui::GetCursorPosX();
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    ImGui::SetCursorPosX(cursor_x + avail.x - 80.0f);
 
-    if (igSmallButton(LOC("设置", "Settings"))) {
+    if (ImGui::SmallButton(LOC("设置", "Settings"))) {
         g_settings_open = !g_settings_open;
     }
 
-    igSeparator();
+    ImGui::Separator();
 
     /* ---- Speaking users list ---- */
     uint32_t user_ids[64];
@@ -302,48 +274,48 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     int user_count = poll ? poll(userdata, user_ids, names, states, 64) : 0;
 
     if (user_count == 0) {
-        igTextColored(mkvec4(0.45f, 0.45f, 0.45f, 1.0f),
+        ImGui::TextColored(ImVec4(0.45f, 0.45f, 0.45f, 1.0f),
                       LOC("  当前没人说话...", "  Nobody is speaking..."));
     } else {
         for (int i = 0; i < user_count; i++) {
-            ImVec4_c col;
+            ImVec4 col;
             const char *status_text;
             switch (states[i]) {
                 case 1: /* SU_TALKING */
-                    col = mkvec4(0.2f, 1.0f, 0.3f, 1.0f);
+                    col = ImVec4(0.2f, 1.0f, 0.3f, 1.0f);
                     status_text = LOC("说话", "Talking");
                     break;
                 case 2: /* SU_WHISPERING */
-                    col = mkvec4(1.0f, 0.9f, 0.2f, 1.0f);
+                    col = ImVec4(1.0f, 0.9f, 0.2f, 1.0f);
                     status_text = LOC("密语", "Whisper");
                     break;
                 case 3: /* SU_SHOUTING */
-                    col = mkvec4(1.0f, 0.25f, 0.25f, 1.0f);
+                    col = ImVec4(1.0f, 0.25f, 0.25f, 1.0f);
                     status_text = LOC("喊话", "Shout");
                     break;
                 default:
-                    col = mkvec4(0.7f, 0.7f, 0.7f, 1.0f);
+                    col = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
                     status_text = "";
                     break;
             }
 
             /* User row: colored bullet + name, status aligned right */
-            igTextColored(col, "  \xe2\x97\x8f  %s", names[i]);
+            ImGui::TextColored(col, "  \xe2\x97\x8f  %s", names[i]);
 
-            igSameLine(0.0f, -1.0f);
-            float px = igGetCursorPosX();
-            ImVec2_c av = igGetContentRegionAvail();
-            igSetCursorPosX(px + av.x - 60.0f);
-            igTextColored(mkvec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", status_text);
+            ImGui::SameLine(0.0f, -1.0f);
+            float px = ImGui::GetCursorPosX();
+            ImVec2 av = ImGui::GetContentRegionAvail();
+            ImGui::SetCursorPosX(px + av.x - 60.0f);
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", status_text);
         }
     }
 
-    igEnd();
+    ImGui::End();
 
     /* ================================================================
      * Render
      * ================================================================ */
-    igRender();
+    ImGui::Render();
 
     {
         int fb_w, fb_h;
@@ -353,7 +325,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         glClear(GL_COLOR_BUFFER_BIT);
     }
 
-    ImDrawData *draw_data = igGetDrawData();
+    ImDrawData *draw_data = ImGui::GetDrawData();
     if (draw_data != NULL) {
         ImGui_ImplOpenGL3_RenderDrawData(draw_data);
     }
@@ -376,7 +348,7 @@ void overlay_window_shutdown(void) {
     if (g_window != NULL) {
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
-        igDestroyContext(NULL);
+        ImGui::DestroyContext();
         glfwDestroyWindow(g_window);
         g_window = NULL;
     }
