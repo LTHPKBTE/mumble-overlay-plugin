@@ -403,8 +403,10 @@ static void on_window_close(GLFWwindow *win) {
 
 /* ========================================================================
  * Apply current config to the GLFW window
-    /* Note: mouse_passthrough is implemented at the ImGui level (NoInputs flag)
-     *       instead of GLFW_MOUSE_PASSTHROUGH so the settings window remains usable. */yle.Alpha = g_config.text_alpha;
+ * ======================================================================== */
+static void apply_config_to_window(void) {
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.Alpha = g_config.text_alpha;
     style.Colors[ImGuiCol_WindowBg].w = g_config.alpha;
 
     glfwSetWindowAttrib(g_window, GLFW_FLOATING,
@@ -474,7 +476,11 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         }
     }
     /* ================================================================
-     * Settings panel (sepa+ Text transparency ---- */
+     * Settings panel (separate floating window)
+     * ================================================================ */
+    if (g_settings_open) {
+        ImGui::Begin(LOC("设置", "Settings"), &g_settings_open, ImGuiWindowFlags_None);
+            /* ---- Window + Text transparency ---- */
             float a = g_config.alpha;
             ImGui::SliderFloat(LOC("窗口透明度", "Window opacity"), &a,
                           0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
@@ -493,12 +499,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
 
             ImGui::Checkbox(LOC("允许危险透明度", "Allow risky opacity"),
                            &g_config.dangerous_alpha_allowed);
-            if (any_low && !g_config.dangerous_alpha_allowed) {
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
-                    LOC("窗口和文字透明度不低于 0.2。\n"
-                        "勾选后可调低。",
-                        "Window & text opacity capped at 0.2.\n"
-                        "Check to allow lower values
             if (any_low && !g_config.dangerous_alpha_allowed) {
                 ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
                     LOC("窗口和文字透明度不低于 0.2。\n"
