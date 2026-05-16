@@ -137,14 +137,14 @@ jobs:
             artifacts/plugin-linux-x64/libplugin.so
             artifacts/plugin-macos-x64/libplugin.dylib
           body: |
-            ## 安装方法
-            1. 下载 `SpeakingUsersOverlay.mumble_plugin`
-            2. 在 Mumble 中打开插件管理器
-            3. 点击 "安装插件" 并选择下载的文件
+            ## Installation
+            1. Download `SpeakingUsersOverlay.mumble_plugin`
+            2. Open Mumble's Plugin Manager
+            3. Click "Install Plugin" and select the downloaded file
 
-            ## 功能
-            - 实时显示正在说话/密语/喊话的用户列表
-            - 可调节窗口透明度
-            - 窗口置顶 + 鼠标穿透模式
+            ## Features
+            - Real-time list of talking / whispering / shouting users
+            - Adjustable window transparency
+            - Always on top + mouse passthrough mode
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

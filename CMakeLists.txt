@@ -1,26 +1,26 @@
 # Mumble Speaking Users Overlay Plugin
 # ============================================
-# 在悬浮窗中显示当前正在说话的 Mumble 用户列表
+# Overlay window showing currently speaking Mumble users.
 #
-# 依赖:
-#   3rdparty/cimgui  — Dear ImGui C binding (git submodule)
-#   3rdparty/glfw    — GLFW library (git submodule)
+# Dependencies (git submodules):
+#   3rdparty/cimgui  -- Dear ImGui C binding
+#   3rdparty/glfw    -- GLFW library
 
 cmake_minimum_required(VERSION 3.16)
 
 project(SpeakingUsersOverlay
     VERSION "1.0.0"
-    DESCRIPTION "Mumble 插件: 悬浮窗显示当前说话玩家列表"
+    DESCRIPTION "Mumble plugin: overlay window showing currently speaking users"
     LANGUAGES C CXX
 )
 
 # ============================================================
-# 选项
+# Options
 # ============================================================
-option(OVERLAY_BUILD_STANDALONE "独立测试模式 (无需 Mumble)" OFF)
+option(OVERLAY_BUILD_STANDALONE "Standalone test mode (no Mumble required)" OFF)
 
 # ============================================================
-# 路径常量
+# Path constants
 # ============================================================
 set(CIMGUI_ROOT   "${CMAKE_SOURCE_DIR}/3rdparty/cimgui")
 set(IMGUI_ROOT    "${CIMGUI_ROOT}/imgui")
@@ -31,11 +31,11 @@ set(GLFW_ROOT     "${CMAKE_SOURCE_DIR}/3rdparty/glfw")
 # GLFW
 # ============================================================
 if(EXISTS "${GLFW_ROOT}/CMakeLists.txt")
-    message(STATUS "使用本地 GLFW 子目录: ${GLFW_ROOT}")
+    message(STATUS "Using local GLFW subdirectory: ${GLFW_ROOT}")
     set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    # Linux CI 通常缺 wayland-scanner，只构建 X11
+    # Linux CI images often lack wayland-scanner; build X11 only
     if(UNIX AND NOT APPLE)
         set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
         set(GLFW_BUILD_X11     ON  CACHE BOOL "" FORCE)
@@ -50,13 +50,13 @@ else()
 endif()
 
 # ============================================================
-# cimgui 静态库 (C++ 编译)
+# cimgui static library (compiled as C++)
 # ============================================================
 if(NOT EXISTS "${CIMGUI_ROOT}/cimgui.h")
-    message(FATAL_ERROR "找不到 cimgui。请确保 3rdparty/cimgui 子模块已初始化。")
+    message(FATAL_ERROR "cimgui not found. Ensure 3rdparty/cimgui submodule is initialised.")
 endif()
 
-# ImGui 核心源文件
+# ImGui core sources
 set(IMGUI_CORE
     ${IMGUI_ROOT}/imgui.cpp
     ${IMGUI_ROOT}/imgui_draw.cpp
@@ -65,12 +65,12 @@ set(IMGUI_CORE
     ${IMGUI_ROOT}/imgui_demo.cpp
 )
 
-# cimgui C 绑定 (不含 cimgui_impl.cpp — 它只做转发，会和后端重复声明)
+# cimgui C binding (without cimgui_impl.cpp -- redeclares backend functions)
 set(CIMGUI_BINDING
     ${CIMGUI_ROOT}/cimgui.cpp
 )
 
-# 后端实现 (C++)
+# Backend implementations (C++)
 set(CIMGUI_BACKENDS
     ${IMGUI_BACKEND}/imgui_impl_glfw.cpp
     ${IMGUI_BACKEND}/imgui_impl_opengl3.cpp
@@ -115,7 +115,7 @@ endif()
 target_compile_features(cimgui PUBLIC cxx_std_11)
 
 # ============================================================
-# 我们的插件共享库 (C 编译)
+# Plugin shared library (compiled as C)
 # ============================================================
 add_library(plugin SHARED
     src/plugin.c
@@ -139,7 +139,7 @@ target_link_libraries(plugin PRIVATE
     ${GLFW_LIBRARIES}
 )
 
-# 编译选项
+# Compiler flags
 if(MSVC)
     target_compile_definitions(plugin PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_options(plugin PRIVATE /W3)
@@ -147,11 +147,11 @@ else()
     target_compile_options(plugin PRIVATE -Wall -Wextra)
 endif()
 
-# 输出名称
+# Output basename (no lib prefix)
 set_target_properties(plugin PROPERTIES PREFIX "")
 
 # ============================================================
-# 安装规则
+# Install rules
 # ============================================================
 install(TARGETS plugin
     LIBRARY DESTINATION .
@@ -159,7 +159,7 @@ install(TARGETS plugin
 )
 
 # ============================================================
-# 独立测试可执行文件
+# Standalone test executable
 # ============================================================
 if(OVERLAY_BUILD_STANDALONE)
     add_executable(overlay_test
