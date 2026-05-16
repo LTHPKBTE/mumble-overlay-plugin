@@ -52,7 +52,11 @@ static int overlay_poll_speakers(void *userdata,
     (void)userdata;
 
     speaking_user_t buffer[64];
-    int count = speaking_users_get_all(buffer, 64, 5);  /* 5-second timeout */
+    overlay_config_t cfg;
+    overlay_window_get_config(&cfg);
+    int timeout = cfg.idle_timeout_seconds;
+    if (timeout < 1) timeout = 5;
+    int count = speaking_users_get_all(buffer, 64, timeout);
     if (count > max_count) count = max_count;
 
     for (int i = 0; i < count; i++) {
@@ -220,6 +224,21 @@ void mumble_onServerSynchronized(mumble_connection_t connection) {
     snprintf(log_buf, sizeof(log_buf),
              "Server synchronized (conn=%d)", (int)connection);
     g_api.log(g_plugin_id, log_buf);
+
+    /* Enumerate all users already on the server and add them as passive */
+    {
+        char name_buf[128];
+        mumble_userid_t *users = NULL;
+        size_t user_count = 0;
+        mumble_error_t err = g_api.getAllUsers(g_plugin_id, connection, &users, &user_count);
+        if (err == MUMBLE_STATUS_OK && users != NULL) {
+            for (size_t i = 0; i < user_count; i++) {
+                const char *name = fetch_user_name(connection, users[i], name_buf, sizeof(name_buf));
+                speaking_users_upsert(users[i], name, SU_PASSIVE);
+            }
+            g_api.freeMemory(g_plugin_id, users);
+        }
+    }
 
     /* Start render thread when we first connect */
     if (!render_thread_is_running()) {

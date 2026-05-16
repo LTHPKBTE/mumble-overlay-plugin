@@ -158,7 +158,7 @@ overlay_config_t overlay_config_default(void) {
     cfg.window_x          = 100;
     cfg.window_y          = 100;
     cfg.window_width      = 320;
-    cfg.window_height     = 480;
+    cfg.window_height     = 400;
     cfg.alpha             = 0.85f;
     cfg.text_alpha        = 1.0f;
     cfg.window_scale      = 1.0f;
@@ -168,8 +168,7 @@ overlay_config_t overlay_config_default(void) {
     cfg.dangerous_alpha_allowed = false;
     cfg.show_idle_users   = true;
     cfg.idle_user_alpha   = 0.3f;
-    cfg.show_idle_users   = true;
-    cfg.idle_user_alpha   = 0.3f;
+    cfg.idle_timeout_seconds = 5;
     return cfg;
 }
 
@@ -208,12 +207,11 @@ static void overlay_config_save(void) {
     fprintf(f, "text_alpha=%.3f\n",    (double)g_config.text_alpha);
     fprintf(f, "window_scale=%.3f\n",  (double)g_config.window_scale);
     fprintf(f, "mouse_passthrough=%d\n", g_config.mouse_passthrough ? 1 : 0);
-    fprintf(f, "show_idle_users=%d\n",  g_config.show_idle_users ? 1 : 0);
-    fprintf(f, "idle_user_alpha=%.3f\n",(double)g_config.idle_user_alpha);
     fprintf(f, "always_on_top=%d\n",   g_config.always_on_top ? 1 : 0);
     fprintf(f, "max_visible_speakers=%d\n", g_config.max_visible_speakers);
     fprintf(f, "show_idle_users=%d\n",  g_config.show_idle_users ? 1 : 0);
     fprintf(f, "idle_user_alpha=%.3f\n",(double)g_config.idle_user_alpha);
+    fprintf(f, "idle_timeout_seconds=%d\n", g_config.idle_timeout_seconds);
     fclose(f);
 }
 
@@ -251,6 +249,7 @@ static void overlay_config_load(overlay_config_t *cfg) {
         else if (sscanf(line, "dangerous_alpha_allowed=%d", &ival) == 1) cfg->dangerous_alpha_allowed = (ival != 0);
         else if (sscanf(line, "show_idle_users=%d", &ival) == 1)   cfg->show_idle_users = (ival != 0);
         else if (sscanf(line, "idle_user_alpha=%f", &fval) == 1)   cfg->idle_user_alpha = fval;
+        else if (sscanf(line, "idle_timeout_seconds=%d", &ival) == 1) cfg->idle_timeout_seconds = ival;
     }
     fclose(f);
 }
@@ -291,6 +290,7 @@ int overlay_window_init(const overlay_config_t *cfg) {
         g_config.dangerous_alpha_allowed = cfg->dangerous_alpha_allowed;
         g_config.show_idle_users   = cfg->show_idle_users;
         g_config.idle_user_alpha   = cfg->idle_user_alpha;
+        g_config.idle_timeout_seconds = cfg->idle_timeout_seconds;
     }
     detect_system_language();
 
@@ -310,11 +310,6 @@ int overlay_window_init(const overlay_config_t *cfg) {
     glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
     glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);    /* no native title bar */
     glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_TRUE);
-
-#ifdef _WIN32
-    glfwWindowHint(GLFW_MOUSE_PASSTHROUGH,
-                   g_config.mouse_passthrough ? GLFW_TRUE : GLFW_FALSE);
-#endif
 
     g_window = glfwCreateWindow(g_config.window_width, g_config.window_height,
                                 "Mumble Speaking Overlay", NULL, NULL);
@@ -475,142 +470,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             glfwShowWindow(g_window);
         }
     }
-    /* ================================================================
-     * Settings panel (separate floating window)
-     * ================================================================ */
-    if (g_settings_open) {
-        ImGui::Begin(LOC("设置", "Settings"), &g_settings_open, ImGuiWindowFlags_None);
-            /* ---- Window + Text transparency ---- */
-            float a = g_config.alpha;
-            ImGui::SliderFloat(LOC("窗口透明度", "Window opacity"), &a,
-                          0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
-            float ta = g_config.text_alpha;
-            ImGui::SliderFloat(LOC("文字透明度", "Text opacity"), &ta,
-                          0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
-
-            /* Safety: cap both if dangerous not allowed */
-            bool any_low = (a < 0.2f || ta < 0.2f);
-            if (any_low && !g_config.dangerous_alpha_allowed) {
-                if (a < 0.2f) a = 0.2f;
-                if (ta < 0.2f) ta = 0.2f;
-            }
-            g_config.alpha = a;
-            g_config.text_alpha = ta;
-
-            ImGui::Checkbox(LOC("允许危险透明度", "Allow risky opacity"),
-                           &g_config.dangerous_alpha_allowed);
-            if (any_low && !g_config.dangerous_alpha_allowed) {
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
-                    LOC("窗口和文字透明度不低于 0.2。\n"
-                        "勾选后可调低。",
-                        "Window & text opacity capped at 0.2.\n"
-                        "Check to allow lower values."));
-            }
-
-            ImGui::Separator();
-
-            /* ---- Scale ---- */
-            ImGui::SliderFloat(LOC("缩放", "Scale"), &g_config.window_scale,
-                          0.25f, 4.0f, "%.1f", ImGuiSliderFlags_None);
-            { ImGuiIO& io = ImGui::GetIO();
-              io.FontGlobalScale = g_config.window_scale; }
-
-            ImGui::Separator();
-
-            ImGui::Checkbox(LOC("窗口置顶", "Always on top"), &g_config.always_on_top);
-
-            /* ---- Mouse passthrough ---- */
-            ImGui::Checkbox(LOC("鼠标穿透", "Mouse passthrough"),
-                                                   &g_config.mouse_passthrough);
-            if (g_config.mouse_passthrough) {
-                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
-                    LOC("启用后将无法用鼠标点击窗口。\n"
-                        "按 Ctrl+Shift+P 可关闭穿透。",
-                        "Cannot click the window once enabled.\n"
-                        "Press Ctrl+Shift+P to disable."));
-            }
-
-            ImGui::Separator();
-
-            /* ---- Visible speakers count ---- */
-            ImGui::SliderInt(LOC("可见发言人数", "Visible speakers"),
-                           &g_config.max_visible_speakers, 1, 64,
-                           "%d", ImGuiSliderFlags_None);
-
-            ImGui::Separator();
-
-            /* ---- Show idle users ---- */
-            ImGui::Checkbox(LOC("显示未发言用户", "Show idle users"),
-                           &g_config.show_idle_users);
-            if (g_config.show_idle_users) {
-                ImGui::SliderFloat(LOC("未发言用户透明度", "Idle user opacity"),
-                               &g_config.idle_user_alpha, 0.0f, 1.0f, "%.2f",
-                               ImGuiSliderFlags_None);
-                if (g_config.idle_user_alpha < 0.2f && !g_config.dangerous_alpha_allowed) {
-                    g_config.idle_user_alpha = 0.2f;
-                }
-            }
-
-            apply_config_to_window();
-
-            ImGui::Separator();
-
-            /* ---- Action buttons ---- */
-            if (g_window_hidden) {
-                if (ImGui::Button(LOC("显示窗口", "Show Window"), ImVec2(-1.0f, 0.0f))) {
-                    g_window_hidden = false;
-                    glfwShowWindow(g_window);
-                }
-            }
-
-            if (ImGui::Button(LOC("重置窗口位置", "Reset Position"), ImVec2(-1.0f, 0.0f))) {
-                overlay_config_t def = overlay_config_default();
-                g_config.window_x = def.window_x;
-                g_config.window_y = def.window_y;
-                g_config.window_width = def.window_width;
-                g_config.window_height = def.window_height;
-                glfwSetWindowPos(g_window, g_config.window_x, g_config.window_y);
-                glfwSetWindowSize(g_window, g_config.window_width, g_config.window_height);
-                if (g_window_hidden) {
-                    g_window_hidden = false;
-                    glfwShowWindow(g_window);
-                }
-            }
-
-            if (ImGui::Button(LOC("重置所有设置", "Reset All Settings"), ImVec2(-1.0f, 0.0f))) {
-                overlay_config_t def = overlay_config_default();
-                g_config.alpha             = def.alpha;
-                g_config.text_alpha        = def.text_alpha;
-                g_config.window_scale      = def.window_scale;
-                g_config.mouse_passthrough = def.mouse_passthrough;
-                g_config.always_on_top     = def.always_on_top;
-                g_config.max_visible_speakers = def.max_visible_speakers;
-                g_config.dangerous_alpha_allowed = def.dangerous_alpha_allowed;
-                g_config.show_idle_users   = def.show_idle_users;
-                g_config.idle_user_alpha   = def.idle_user_alpha;
-                g_config.window_x = def.window_x;
-                g_config.window_y = def.window_y;
-                g_config.window_width = def.window_width;
-                g_config.window_height = def.window_height;
-                glfwSetWindowPos(g_window, g_config.window_x, g_config.window_y);
-                glfwSetWindowSize(g_window, g_config.window_width, g_config.window_height);
-                {
-                    ImGuiIO& io_reset = ImGui::GetIO();
-                    io_reset.FontGlobalScale = g_config.window_scale;
-                }
-                if (g_window_hidden) {
-                    g_window_hidden = false;
-                    glfwShowWindow(g_window);
-                }
-            }
-
-            ImGui::TextWrapped(
-                LOC("\"重置所有设置\" | 恢复默认值\n"
-                    "拖拽窗口顶部空白区域移动位置。",
-                    "\"Reset All Settings\" | Restore defaults\n"
-                    "Drag the top empty area of the window to move.") );
-        ImGui::End();
-    }
 
     /* ================================================================
      * Main overlay panel — fills the entire GLFW window
@@ -696,8 +555,10 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
 
         if (drag_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             ImVec2 delta = ImGui::GetIO().MouseDelta;
-            int new_x = g_config.window_x + (int)delta.x;
-            int new_y = g_config.window_y + (int)delta.y;
+            int cur_x, cur_y;
+            glfwGetWindowPos(g_window, &cur_x, &cur_y);
+            int new_x = cur_x + (int)delta.x;
+            int new_y = cur_y + (int)delta.y;
 
             /* Clamp to screen edges */
             int fb_x, fb_y, fb_w, fb_h;
@@ -920,36 +781,180 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         ImGui::EndChild();
     }
 
+    /* ---- Auto-size the window to fit content on first frame ---- */
+    if (g_first_frame) {
+        float content_h = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+        float scale = g_config.window_scale;
+        if (scale < 0.01f) scale = 1.0f;
+        int target_h = (int)(content_h / scale + 0.5f);
+        if (target_h < 40) target_h = 40;
+        int target_w = 280;
+        glfwSetWindowSize(g_window, target_w, target_h);
+        g_config.window_width = target_w;
+        g_config.window_height = target_h;
+        g_first_frame = false;
+    }
+
     ImGui::End();
+
+    /* ================================================================
+     * Settings panel — rendered AFTER main, so it floats on top
+     * (separate ImGui window, not affected by NoInputs)
+     * ================================================================ */
+    if (g_settings_open) {
+        ImGui::Begin(LOC("设置", "Settings"), &g_settings_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+            /* ---- Window + Text transparency ---- */
+            float a = g_config.alpha;
+            ImGui::SliderFloat(LOC("窗口透明度", "Window opacity"), &a,
+                          0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
+            float ta = g_config.text_alpha;
+            ImGui::SliderFloat(LOC("文字透明度", "Text opacity"), &ta,
+                          0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
+
+            /* Safety: cap both if dangerous not allowed */
+            bool any_low = (a < 0.2f || ta < 0.2f);
+            if (any_low && !g_config.dangerous_alpha_allowed) {
+                if (a < 0.2f) a = 0.2f;
+                if (ta < 0.2f) ta = 0.2f;
+            }
+            g_config.alpha = a;
+            g_config.text_alpha = ta;
+
+            ImGui::Checkbox(LOC("允许危险透明度", "Allow risky opacity"),
+                           &g_config.dangerous_alpha_allowed);
+            if (any_low && !g_config.dangerous_alpha_allowed) {
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
+                    LOC("窗口和文字透明度不低于 0.2。\n"
+                        "勾选后可调低。",
+                        "Window & text opacity capped at 0.2.\n"
+                        "Check to allow lower values."));
+            }
+
+            ImGui::Separator();
+
+            /* ---- Scale ---- */
+            ImGui::SliderFloat(LOC("缩放", "Scale"), &g_config.window_scale,
+                          0.25f, 4.0f, "%.1f", ImGuiSliderFlags_None);
+            {
+                ImGuiIO& io = ImGui::GetIO();
+                io.FontGlobalScale = g_config.window_scale;
+                /* Also resize the GLFW window to match the new scale */
+                int base_w = (int)((float)g_config.window_width / g_config.window_scale + 0.5f);
+                int base_h = (int)((float)g_config.window_height / g_config.window_scale + 0.5f);
+                if (base_w < 100) base_w = 100;
+                if (base_h < 100) base_h = 100;
+                int new_w = (int)((float)base_w * g_config.window_scale + 0.5f);
+                int new_h = (int)((float)base_h * g_config.window_scale + 0.5f);
+                glfwSetWindowSize(g_window, new_w, new_h);
+            }
+
+            ImGui::Separator();
+
+            ImGui::Checkbox(LOC("窗口置顶", "Always on top"), &g_config.always_on_top);
+
+            /* ---- Mouse passthrough ---- */
+            ImGui::Checkbox(LOC("鼠标穿透", "Mouse passthrough"),
+                                                   &g_config.mouse_passthrough);
+            if (g_config.mouse_passthrough) {
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
+                    LOC("启用后将无法用鼠标点击窗口。\n"
+                        "按 Ctrl+Shift+P 可关闭穿透。",
+                        "Cannot click the window once enabled.\n"
+                        "Press Ctrl+Shift+P to disable."));
+            }
+
+            ImGui::Separator();
+
+            /* ---- Visible speakers count ---- */
+            ImGui::SliderInt(LOC("可见发言人数", "Visible speakers"),
+                           &g_config.max_visible_speakers, 1, 64,
+                           "%d", ImGuiSliderFlags_None);
+
+            ImGui::Separator();
+
+            /* ---- Show idle users ---- */
+            ImGui::Checkbox(LOC("显示未发言用户", "Show idle users"),
+                           &g_config.show_idle_users);
+            if (g_config.show_idle_users) {
+                ImGui::SliderFloat(LOC("未发言用户透明度", "Idle user opacity"),
+                               &g_config.idle_user_alpha, 0.0f, 1.0f, "%.2f",
+                               ImGuiSliderFlags_None);
+                if (g_config.idle_user_alpha < 0.2f && !g_config.dangerous_alpha_allowed) {
+                    g_config.idle_user_alpha = 0.2f;
+                }
+            }
+
+            /* ---- Idle timeout ---- */
+            ImGui::SliderInt(LOC("空闲超时(秒)", "Idle timeout(s)"),
+                           &g_config.idle_timeout_seconds, 1, 30,
+                           "%d", ImGuiSliderFlags_None);
+
+            apply_config_to_window();
+
+            ImGui::Separator();
+
+            /* ---- Action buttons ---- */
+            if (g_window_hidden) {
+                if (ImGui::Button(LOC("显示窗口", "Show Window"), ImVec2(-1.0f, 0.0f))) {
+                    g_window_hidden = false;
+                    glfwShowWindow(g_window);
+                }
+            }
+
+            if (ImGui::Button(LOC("重置窗口位置", "Reset Position"), ImVec2(-1.0f, 0.0f))) {
+                overlay_config_t def = overlay_config_default();
+                g_config.window_x = def.window_x;
+                g_config.window_y = def.window_y;
+                g_config.window_width = def.window_width;
+                g_config.window_height = def.window_height;
+                glfwSetWindowPos(g_window, g_config.window_x, g_config.window_y);
+                glfwSetWindowSize(g_window, g_config.window_width, g_config.window_height);
+                if (g_window_hidden) {
+                    g_window_hidden = false;
+                    glfwShowWindow(g_window);
+                }
+            }
+
+            if (ImGui::Button(LOC("重置所有设置", "Reset All Settings"), ImVec2(-1.0f, 0.0f))) {
+                overlay_config_t def = overlay_config_default();
+                g_config.alpha             = def.alpha;
+                g_config.text_alpha        = def.text_alpha;
+                g_config.window_scale      = def.window_scale;
+                g_config.mouse_passthrough = def.mouse_passthrough;
+                g_config.always_on_top     = def.always_on_top;
+                g_config.max_visible_speakers = def.max_visible_speakers;
+                g_config.dangerous_alpha_allowed = def.dangerous_alpha_allowed;
+                g_config.show_idle_users   = def.show_idle_users;
+                g_config.idle_user_alpha   = def.idle_user_alpha;
+                g_config.idle_timeout_seconds = def.idle_timeout_seconds;
+                g_config.window_x = def.window_x;
+                g_config.window_y = def.window_y;
+                g_config.window_width = def.window_width;
+                g_config.window_height = def.window_height;
+                glfwSetWindowPos(g_window, g_config.window_x, g_config.window_y);
+                glfwSetWindowSize(g_window, g_config.window_width, g_config.window_height);
+                {
+                    ImGuiIO& io_reset = ImGui::GetIO();
+                    io_reset.FontGlobalScale = g_config.window_scale;
+                }
+                if (g_window_hidden) {
+                    g_window_hidden = false;
+                    glfwShowWindow(g_window);
+                }
+            }
+
+            ImGui::TextWrapped(
+                LOC("\"重置所有设置\" | 恢复默认值\n"
+                    "拖拽窗口顶部空白区域移动位置。",
+                    "\"Reset All Settings\" | Restore defaults\n"
+                    "Drag the top empty area of the window to move.") );
+        ImGui::End();
+    }
 
     /* ================================================================
      * Render
      * ================================================================ */
     ImGui::Render();
-
-    {
-        int fb_w, fb_h;
-        glfwGetFramebufferSize(g_window, &fb_w, &fb_h);
-        glViewport(0, 0, fb_w, fb_h);
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-    }
-
-    ImDrawData *draw_data = ImGui::GetDrawData();
-    if (draw_data != NULL) {
-        ImGui_ImplOpenGL3_RenderDrawData(draw_data);
-    }
-
-    glfwSwapBuffers(g_window);
-
-    if (g_first_frame) g_first_frame = false;
-
-    /* Track window position / size for config persistence */
-    glfwGetWindowPos(g_window, &g_config.window_x, &g_config.window_y);
-    glfwGetWindowSize(g_window, &g_config.window_width, &g_config.window_height);
-
-    return true;
-}
 
 /* ========================================================================
  * Shutdown
