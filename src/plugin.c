@@ -22,20 +22,16 @@
 #include <string.h>
 #include <time.h>
 
-/* Log helper — only prints when mumble_logging_enabled is true */
+/* Log helper — respects config once overlay is initialized */
 #define PLUGIN_LOG(msg) do { \
-    overlay_config_t _cfg; \
-    overlay_window_get_config(&_cfg); \
-    if (_cfg.mumble_logging_enabled) { \
+    if (g_mumble_logging_enabled) { \
         g_api.log(g_plugin_id, msg); \
     } \
 } while(0)
 
 /* Log with format string */
 #define PLUGIN_LOGF(fmt, ...) do { \
-    overlay_config_t _cfg; \
-    overlay_window_get_config(&_cfg); \
-    if (_cfg.mumble_logging_enabled) { \
+    if (g_mumble_logging_enabled) { \
         char _buf[256]; \
         snprintf(_buf, sizeof(_buf), fmt, __VA_ARGS__); \
         g_api.log(g_plugin_id, _buf); \
@@ -48,6 +44,9 @@
 static MumbleAPI           g_api;              /* Mumble API function table */
 static mumble_plugin_id_t  g_plugin_id;        /* Our plugin ID */
 static mumble_connection_t g_active_connection = -1; /* Current server connection */
+
+/* Default logging to true before overlay_window_init loads config */
+static bool g_mumble_logging_enabled = true;
 
 /* ========================================================================
  * Forward declarations
@@ -104,6 +103,7 @@ mumble_error_t mumble_init(mumble_plugin_id_t id) {
 
     speaking_users_init();
     g_active_connection = -1;
+    g_mumble_logging_enabled = true;
 
     /* Check if we are already connected to a server (plugin loaded after connection).
      * This allows the overlay to appear immediately without waiting for a new connection. */
@@ -139,6 +139,10 @@ mumble_error_t mumble_init(mumble_plugin_id_t id) {
                 if (rc != 0) {
                     PLUGIN_LOG("Failed to start render thread for existing connection");
                 } else {
+                    /* Sync logging flag from overlay config (now loaded from disk) */
+                    overlay_config_t loaded_cfg;
+                    overlay_window_get_config(&loaded_cfg);
+                    g_mumble_logging_enabled = loaded_cfg.mumble_logging_enabled;
                     PLUGIN_LOG("Overlay window started for existing connection");
                 }
             }
@@ -275,6 +279,10 @@ void mumble_onServerSynchronized(mumble_connection_t connection) {
         if (rc != 0) {
             PLUGIN_LOG("Failed to start render thread");
         } else {
+            /* Sync logging flag from overlay config (now loaded from disk) */
+            overlay_config_t loaded_cfg;
+            overlay_window_get_config(&loaded_cfg);
+            g_mumble_logging_enabled = loaded_cfg.mumble_logging_enabled;
             PLUGIN_LOG("Overlay window started");
         }
     }

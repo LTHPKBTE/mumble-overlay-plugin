@@ -333,7 +333,6 @@ int overlay_window_init(const overlay_config_t *cfg) {
     }
 
     glfwSetWindowPos(g_window, g_config.window_x, g_config.window_y);
-    glfwSetWindowCloseCallback(g_window, on_window_close);
 
 #ifdef _WIN32
     /* Remove taskbar entry by switching to WS_EX_TOOLWINDOW */
@@ -396,6 +395,9 @@ int overlay_window_init(const overlay_config_t *cfg) {
         return OW_ERR_IMGUI;
     }
 
+    /* Install close callback AFTER ImGui_ImplGlfw_InitForOpenGL so it doesn't get overwritten */
+    glfwSetWindowCloseCallback(g_window, on_window_close);
+
     g_first_frame = true;
     return OW_OK;
 }
@@ -420,8 +422,21 @@ static void apply_config_to_window(void) {
 
     glfwSetWindowAttrib(g_window, GLFW_FLOATING,
                         g_config.always_on_top ? GLFW_TRUE : GLFW_FALSE);
-    /* Note: mouse_passthrough is implemented at the ImGui level (NoInputs flag)
-     *       instead of GLFW_MOUSE_PASSTHROUGH so the settings window remains usable. */
+    glfwSetWindowAttrib(g_window, GLFW_MOUSE_PASSTHROUGH,
+                        g_config.mouse_passthrough ? GLFW_TRUE : GLFW_FALSE);
+
+#ifdef _WIN32
+    /* On Windows, also set WS_EX_TOPMOST for reliable always-on-top */
+    {
+        HWND hwnd = glfwGetWin32Window(g_window);
+        if (hwnd != NULL) {
+            SetWindowPos(hwnd,
+                         g_config.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
+                         0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    }
+#endif
 }
 
 /* ========================================================================
@@ -430,6 +445,11 @@ static void apply_config_to_window(void) {
 bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     /* ---- Window hidden by user?  Sleep to save CPU, don't exit ---- */
     if (g_window_hidden) {
+        glfwHideWindow(g_window);
+        /* Clear the close-request that may have been set by glfw */
+        glfwSetWindowShouldClose(g_window, GLFW_FALSE);
+        /* Reset user-hid flag after processing */
+        g_user_hid_window = false;
         glfwWaitEventsTimeout(0.25);
         return true;
     }
@@ -444,29 +464,30 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    /* ---- Keyboard shortcuts (checked every frame via glfwGetKey + ImGui IO) ---- */
+    /* ---- Keyboard shortcuts (checked every frame via ImGui key API, works regardless of focus) ---- */
     {
         ImGuiIO& io = ImGui::GetIO();
+        bool ctrl  = io.KeyCtrl  || ImGui::IsKeyDown(ImGuiKey_LeftCtrl)  || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+        bool shift = io.KeyShift || ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
+
         /* Ctrl+Shift+P -> disable mouse passthrough */
-        if (glfwGetKey(g_window, GLFW_KEY_P) == GLFW_PRESS && io.KeyCtrl && io.KeyShift) {
-            if (g_config.mouse_passthrough) {
-                g_config.mouse_passthrough = false;
-                apply_config_to_window();
-            }
+        if (ImGui::IsKeyPressed(ImGuiKey_P) && ctrl && shift && g_config.mouse_passthrough) {
+            g_config.mouse_passthrough = false;
+            apply_config_to_window();
         }
         /* Ctrl+Shift+H → show hidden window */
-        if (glfwGetKey(g_window, GLFW_KEY_H) == GLFW_PRESS && io.KeyCtrl && io.KeyShift) {
-            if (g_window_hidden) {
-                g_window_hidden = false;
-                g_user_saw_speaking_after_hide = false;
-                glfwShowWindow(g_window);
-            }
+        if (ImGui::IsKeyPressed(ImGuiKey_H) && ctrl && shift && g_window_hidden) {
+            g_window_hidden = false;
+            g_user_hid_window = false;
+            g_user_saw_speaking_after_hide = false;
+            glfwShowWindow(g_window);
         }
     }
     /* ---- Handle request flags (set from Mumble main thread) ---- */
     if (g_request_show && g_window_hidden) {
         g_request_show = false;
         g_window_hidden = false;
+        g_user_hid_window = false;
         g_user_saw_speaking_after_hide = false;
         glfwShowWindow(g_window);
     }
@@ -481,6 +502,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         glfwSetWindowSize(g_window, g_config.window_width, g_config.window_height);
         if (g_window_hidden) {
             g_window_hidden = false;
+            g_user_hid_window = false;
             glfwShowWindow(g_window);
         }
     }
@@ -502,6 +524,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         main_flags |= ImGuiWindowFlags_NoInputs;
     }
 
+    ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 60.0f), ImVec2(FLT_MAX, FLT_MAX));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f));
     ImGui::Begin("SpeakingOverlayMain", NULL, main_flags);
     ImGui::PopStyleVar();
@@ -537,8 +560,10 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         ImGui::SameLine(0.0f, 2.0f);
         ImGui::SetCursorPosX(btn_x + btn_w + 4.0f);
         if (ImGui::SmallButton("X")) {
+            g_user_hid_window = true;
             g_window_hidden = true;
             glfwHideWindow(g_window);
+            g_drag_active = false;
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s",
@@ -676,7 +701,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     }
 
     /* ---- Auto-show window when users start speaking ---- */
-    if (g_window_hidden && user_count > 0) {
+    if (g_window_hidden && !g_user_hid_window && user_count > 0) {
         if (!g_user_saw_speaking_after_hide) {
             g_user_saw_speaking_after_hide = true;
             g_window_hidden = false;
@@ -781,13 +806,13 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 name_col.w *= g_config.idle_user_alpha;
             }
 
-            /* User row: colored bullet + name, status aligned right */
-            ImGui::TextColored(name_col, "  \xe2\x97\x8f  %s", names[i]);
+            /* User row: colored bullet + name, status right-aligned via columns */
+            ImGui::TextColored(name_col, "  \xe2\x97\x8f  %s  ", names[i]);
 
             ImGui::SameLine(0.0f, -1.0f);
-            float px = ImGui::GetCursorPosX();
-            ImVec2 av = ImGui::GetContentRegionAvail();
-            ImGui::SetCursorPosX(px + av.x - 60.0f);
+            float text_w = ImGui::CalcTextSize(status_text).x;
+            float avail_w = ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail_w - text_w);
             ImVec4 st_col = ImVec4(0.5f, 0.5f, 0.5f, is_pinned ? 1.0f : 0.5f);
             if (is_idle) {
                 st_col.w *= g_config.idle_user_alpha;
@@ -915,6 +940,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             if (g_window_hidden) {
                 if (ImGui::Button(LOC("显示窗口", "Show Window"), ImVec2(-1.0f, 0.0f))) {
                     g_window_hidden = false;
+                    g_user_hid_window = false;
                     glfwShowWindow(g_window);
                 }
             }
@@ -929,6 +955,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 glfwSetWindowSize(g_window, g_config.window_width, g_config.window_height);
                 if (g_window_hidden) {
                     g_window_hidden = false;
+                    g_user_hid_window = false;
                     glfwShowWindow(g_window);
                 }
             }
@@ -958,6 +985,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 }
                 if (g_window_hidden) {
                     g_window_hidden = false;
+                    g_user_hid_window = false;
                     glfwShowWindow(g_window);
                 }
             }
@@ -1000,21 +1028,25 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     }
 
 #ifdef _WIN32
-    /* Ensure all ImGui viewport windows (e.g. settings panel) are tool windows
-     * without taskbar entries. The main window gets this in overlay_window_init. */
+    /* Force all ImGui viewport windows (including main + settings) to tool windows
+     * without taskbar entries. Re-apply every frame because viewport creation may
+     * temporarily show a normal window. */
     {
         ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
         for (int i = 0; i < pio.Viewports.Size; i++) {
             ImGuiViewport* vp = pio.Viewports[i];
-            if (vp->PlatformHandle != NULL && vp->PlatformHandle != glfwGetWin32Window(g_window)) {
+            if (vp->PlatformHandle != NULL) {
                 HWND hwnd = (HWND)vp->PlatformHandle;
                 LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
                 if (!(exstyle & WS_EX_TOOLWINDOW)) {
+                    /* Hide briefly to avoid taskbar flash when changing style */
+                    ShowWindow(hwnd, SW_HIDE);
                     exstyle |= WS_EX_TOOLWINDOW;
                     exstyle &= ~WS_EX_APPWINDOW;
                     SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
                     SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
                                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+                    ShowWindow(hwnd, SW_SHOW);
                 }
             }
         }
