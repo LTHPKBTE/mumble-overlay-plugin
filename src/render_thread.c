@@ -31,12 +31,12 @@ static LONG g_stop_flag = 0;
 #define ATOMIC_SET(dst, val)  InterlockedExchange(&(dst), (LONG)(val))
 #define ATOMIC_GET(src)       InterlockedCompareExchange(&(src), 0, 0)
 #else
-/* Use C11 _Atomic */
-#include <stdatomic.h>
-static atomic_int  g_running   = 0;  /* 0=idle, 1=running, -1=stopping */
-static atomic_bool g_stop_flag = false;
-#define ATOMIC_SET(dst, val)  atomic_store(&(dst), (int)(val))
-#define ATOMIC_GET(src)       atomic_load(&(src))
+/* Use C++11 std::atomic (compiled as C++) */
+#include <atomic>
+static std::atomic<int>  g_running(0);
+static std::atomic<bool> g_stop_flag(false);
+#define ATOMIC_SET(dst, val)  (dst).store((int)(val), std::memory_order_relaxed)
+#define ATOMIC_GET(src)       (src).load(std::memory_order_relaxed)
 #endif
 
 /* ---- Internal state ---- */
@@ -56,22 +56,22 @@ static THREAD_RETURN render_thread_proc(void *arg) {
     int rc = overlay_window_init(&data->config);
     if (rc != OW_OK) {
         free(data);
-        ATOMIC_SET(g_running, false);
+        ATOMIC_SET(g_running, 0);
         THREAD_EXIT(1);
     }
 
-    ATOMIC_SET(g_running, true);
+    ATOMIC_SET(g_running, 1);
 
     while (!ATOMIC_GET(g_stop_flag)) {
         bool keep_going = overlay_window_frame(data->poll_fn, data->userdata);
         if (!keep_going) {
-            break;  /* user closed the window */
+            break;
         }
     }
 
     overlay_window_shutdown();
     free(data);
-    ATOMIC_SET(g_running, false);
+    ATOMIC_SET(g_running, 0);
     THREAD_EXIT(0);
 }
 
@@ -112,7 +112,7 @@ int render_thread_start(const overlay_config_t *cfg,
 }
 
 void render_thread_stop(void) {
-    /* Atomically transition 1 → -1 (stopping). Only ONE caller succeeds. */
+    /* Atomically transition 1 -> -1 (stopping). Only ONE caller succeeds. */
 #ifdef _WIN32
     LONG prev = InterlockedCompareExchange(&g_running, -1, 1);
     if (prev != 1) {
@@ -120,7 +120,7 @@ void render_thread_stop(void) {
     }
 #else
     int expected = 1;
-    if (!atomic_compare_exchange_strong(&g_running, &expected, -1)) {
+    if (!g_running.compare_exchange_strong(expected, -1)) {
         return;
     }
 #endif

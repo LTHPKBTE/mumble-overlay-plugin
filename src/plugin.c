@@ -119,7 +119,11 @@ void mumble_releaseResource(const void *pointer) {
  * ======================================================================== */
 
 mumble_version_t mumble_getVersion(void) {
-    return (mumble_version_t){ 1, 0, 0 };
+    mumble_version_t v;
+    v.major = 1;
+    v.minor = 0;
+    v.patch = 0;
+    return v;
 }
 
 struct MumbleStringWrapper mumble_getAuthor(void) {

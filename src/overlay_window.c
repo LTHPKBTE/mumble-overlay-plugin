@@ -23,7 +23,8 @@
 #endif
 
 #include "cimgui.h"
-#include "cimgui_impl.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
 
 #ifdef __APPLE__
 #pragma clang diagnostic push
@@ -42,27 +43,19 @@
 
 #ifdef _WIN32
 #include <windows.h>
+/* Windows SDK provides GL/gl.h via glfw3.h auto-include */
+#else
+/* Minimal GL 1.1 declarations (link with -lGL / OpenGL.framework) */
+#define GL_COLOR_BUFFER_BIT 0x00004000
+extern "C" {
+void glClear(unsigned int mask);
+void glClearColor(float r, float g, float b, float a);
+void glViewport(int x, int y, int w, int h);
+}
 #endif
 
 /* ---- Overlay internal header ---- */
 #include "overlay_window.h"
-
-/* ========================================================================
- * OpenGL 1.1 symbols — provided by opengl32.dll / libGL.so
- * These are linked directly (no loader needed for basic calls).
- * ======================================================================== */
-#define GL_COLOR_BUFFER_BIT 0x00004000
-#ifdef _WIN32
-/* Windows: opengl32.dll uses __stdcall */
-#define GL_CALL __stdcall
-extern void GL_CALL glClear(unsigned int mask);
-extern void GL_CALL glClearColor(float r, float g, float b, float a);
-extern void GL_CALL glViewport(int x, int y, int w, int h);
-#else
-extern void glClear(unsigned int mask);
-extern void glClearColor(float r, float g, float b, float a);
-extern void glViewport(int x, int y, int w, int h);
-#endif
 
 /* ========================================================================
  * Localisation: detect system language
