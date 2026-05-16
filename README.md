@@ -35,11 +35,16 @@ Click the Settings button to open:
 
 | Setting | Description |
 |---|---|
-| **Transparency** | Slider to adjust window opacity (0.1 ~ 1.0) |
+| **Window opacity** | Slider to adjust window background opacity (0.0 ~ 1.0). Capped at 0.2 unless &#34;Allow risky opacity&#34; is checked |
+| **Text opacity** | Slider to adjust text and UI element opacity (0.0 ~ 1.0) |
+| **Allow risky opacity** | When unchecked, window opacity cannot go below 0.2 |
+| **Scale** | Content scaling factor (0.5x ~ 2.0x) |
 | **Always on top** | Keep window above other windows |
 | **Mouse passthrough** | Let mouse clicks pass through the window |
 | **Visible speakers** | Number of recent speakers shown at top (1~64) |
+| **Show Window** (button) | Re-show a hidden window |
 | **Reset Position** (button) | Reset window position and size to defaults |
+| **Reset All Settings** (button) | Reset all settings to factory defaults |
 
 ### Keyboard Shortcuts
 
@@ -111,23 +116,21 @@ cmake --build build
 
 ### 4. Install to Mumble
 
-**Windows:**
-1. Create the folder `%APPDATA%\Mumble\Plugins` if it doesn't exist.
-2. Copy `build/Release/plugin.dll` into that folder.
-3. (Re)start Mumble — the plugin will load automatically.
-4. You can verify it's running in Mumble: **Settings > Plugins**.
+**Using Mumble's plugin manager (recommended):**
+1. Open Mumble, go to **Settings > Plugins**. Click **Install Plugin**.
+2. Select the compiled `plugin.dll` (Windows), `libplugin.so` (Linux), or `libplugin.dylib` (macOS).
+3. Enable the plugin in the list.
 
-**Linux / macOS:**
-1. Copy `build/libplugin.so` (Linux) or `build/libplugin.dylib` (macOS) to:
-   - Linux:   `~/.local/share/Mumble/Plugins/`
-   - macOS:   `~/Library/Application Support/Mumble/Plugins/`
-2. (Re)start Mumble.
+**Manual install:**
+- Windows: Copy `plugin.dll` to `%APPDATA%\Mumble\Plugins\`
+- Linux:   Copy `libplugin.so` to `~/.local/share/Mumble/Plugins/`
+- macOS:   Copy `libplugin.dylib` to `~/Library/Application Support/Mumble/Plugins/`
 
 **Bundle as .mumble_plugin (portable):**
 ```bash
 zip SpeakingUsersOverlay.mumble_plugin plugin.dll manifest.xml
 ```
-Double-click the `.mumble_plugin` file to install.
+Double-click the `.mumble_plugin` file or use **Settings > Plugins > Install Plugin**.
 
 ## Architecture
 

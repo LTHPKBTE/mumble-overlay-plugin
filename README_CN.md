@@ -35,11 +35,16 @@
 
 | 设置项 | 说明 |
 |---|---|
-| **透明度** | 滑动条调节窗口透明度 (0.1 ~ 1.0) |
+| **窗口透明度** | 滑动条调节窗口背景透明度 (0.0 ~ 1.0)。不超过 0.2，除非勾选&#34;允许危险透明度&#34; |
+| **文字透明度** | 滑动条调节文字和 UI 元素透明度 (0.0 ~ 1.0) |
+| **允许危险透明度** | 未勾选时窗口透明度不低于 0.2 |
+| **缩放** | 内容缩放比例 (0.5x ~ 2.0x) |
 | **窗口置顶** | 保持窗口在其他窗口之上 |
 | **鼠标穿透** | 让鼠标点击穿透到窗口后方的程序 |
 | **可见发言人数** | 顶部显示的最远发言用户数 (1~64) |
+| **显示窗口**（按钮） | 重新显示被隐藏的窗口 |
 | **重置窗口位置**（按钮） | 将窗口位置和大小重置为默认值 |
+| **重置所有设置**（按钮） | 将所有设置恢复为出厂默认值 |
 
 ### 键盘快捷键
 
@@ -111,23 +116,21 @@ cmake --build build
 
 ### 4. 安装到 Mumble
 
-**Windows：**
-1. 创建文件夹 `%APPDATA%\Mumble\Plugins`（如果不存在）。
-2. 将 `build/Release/plugin.dll` 复制到该文件夹中。
-3. （重新）启动 Mumble — 插件会自动加载。
-4. 可在 Mumble 的 **设置 > 插件** 中确认插件已运行。
+**推荐方法 — 使用 Mumble 插件管理器：**
+1. 打开 Mumble，进入 **设置 > 插件**，点击 **安装插件**。
+2. 选择编译好的 `plugin.dll` (Windows)、`libplugin.so` (Linux) 或 `libplugin.dylib` (macOS)。
+3. 在列表中启用插件。
 
-**Linux / macOS：**
-1. 将 `build/libplugin.so`（Linux）或 `build/libplugin.dylib`（macOS）复制到：
-   - Linux:   `~/.local/share/Mumble/Plugins/`
-   - macOS:   `~/Library/Application Support/Mumble/Plugins/`
-2. （重新）启动 Mumble。
+**手动安装：**
+- Windows：将 `plugin.dll` 复制到 `%APPDATA%\Mumble\Plugins\`
+- Linux：  将 `libplugin.so` 复制到 `~/.local/share/Mumble/Plugins/`
+- macOS：  将 `libplugin.dylib` 复制到 `~/Library/Application Support/Mumble/Plugins/`
 
 **打包为 .mumble_plugin（便携式安装）：**
 ```bash
 zip SpeakingUsersOverlay.mumble_plugin plugin.dll manifest.xml
 ```
-双击 `.mumble_plugin` 文件即可安装。
+双击 `.mumble_plugin` 文件，或在 **设置 > 插件 > 安装插件** 中选择。
 
 ## 架构
 
