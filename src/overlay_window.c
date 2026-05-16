@@ -956,6 +956,28 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
      * ================================================================ */
     ImGui::Render();
 
+    {
+        int fb_w, fb_h;
+        glfwGetFramebufferSize(g_window, &fb_w, &fb_h);
+        glViewport(0, 0, fb_w, fb_h);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+
+    ImDrawData *draw_data = ImGui::GetDrawData();
+    if (draw_data != NULL) {
+        ImGui_ImplOpenGL3_RenderDrawData(draw_data);
+    }
+
+    glfwSwapBuffers(g_window);
+
+    /* Track window position / size for config persistence */
+    glfwGetWindowPos(g_window, &g_config.window_x, &g_config.window_y);
+    glfwGetWindowSize(g_window, &g_config.window_width, &g_config.window_height);
+
+    return true;
+}
+
 /* ========================================================================
  * Shutdown
  * ======================================================================== */
