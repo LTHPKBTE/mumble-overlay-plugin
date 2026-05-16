@@ -12,12 +12,24 @@
  */
 
 /* ---- Must be defined BEFORE including cimgui.h ---- */
+#ifndef CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
+#endif
+#ifndef CIMGUI_USE_GLFW
 #define CIMGUI_USE_GLFW
+#endif
+#ifndef CIMGUI_USE_OPENGL3
 #define CIMGUI_USE_OPENGL3
+#endif
 
 #include "cimgui.h"
 #include "cimgui_impl.h"
+
+#ifdef __APPLE__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#define GL_SILENCE_DEPRECATION
+#endif
 
 /* macro alias — cimgui v1.92+ uses igGetIO_Nil */
 #define igGetIO igGetIO_Nil
@@ -384,3 +396,7 @@ void overlay_window_shutdown(void) {
 void overlay_window_get_config(overlay_config_t *cfg) {
     *cfg = g_config;
 }
+
+#ifdef __APPLE__
+#pragma clang diagnostic pop
+#endif

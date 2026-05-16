@@ -115,13 +115,22 @@ endif()
 target_compile_features(cimgui PUBLIC cxx_std_11)
 
 # ============================================================
-# Plugin shared library (compiled as C)
+# Plugin shared library (compiled as C++ for MumblePlugin.h compatibility)
 # ============================================================
 add_library(plugin SHARED
     src/plugin.c
     src/speaking_users.c
     src/overlay_window.c
     src/render_thread.c
+)
+
+# Force C++ compilation (MumblePlugin.h requires C++)
+set_source_files_properties(
+    src/plugin.c
+    src/speaking_users.c
+    src/overlay_window.c
+    src/render_thread.c
+    PROPERTIES LANGUAGE CXX
 )
 
 target_include_directories(plugin PRIVATE
@@ -167,6 +176,13 @@ if(OVERLAY_BUILD_STANDALONE)
         src/overlay_window.c
         src/render_thread.c
         src/speaking_users.c
+    )
+    set_source_files_properties(
+        test/test_standalone.c
+        src/overlay_window.c
+        src/render_thread.c
+        src/speaking_users.c
+        PROPERTIES LANGUAGE CXX
     )
     target_include_directories(overlay_test PRIVATE
         "${CMAKE_SOURCE_DIR}/include"

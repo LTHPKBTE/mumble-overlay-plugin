@@ -9,6 +9,7 @@
 #define OVERLAY_WINDOW_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Result codes for overlay_window_init */
 #define OW_OK         0
