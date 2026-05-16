@@ -75,6 +75,7 @@ static overlay_config_t g_config;
 static bool             g_settings_open  = false;
 static bool             g_first_frame    = true;
 static bool             g_window_hidden  = false;   /* user clicked close */
+static bool             g_user_hid_window = false;  /* true when user clicked X */
 static bool             g_user_saw_speaking_after_hide = false;
 
 /* ---- Request flags (set from Mumble main thread, consumed by render thread) ---- */
