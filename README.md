@@ -7,22 +7,11 @@ Overlay plugin that displays a real-time list of users currently speaking on a M
 ## Features
 
 - Real-time display of talking / whispering / shouting users
-- Shows ALL users on the server (including idle ones)
-- Adjustable window transparency (Alpha) and text/UI opacity
-- Always on Top
-- Mouse passthrough mode — clicks pass through main overlay window, but settings panel remains interactive
-- Recent speakers first — sorting by speaking recency
-- Configurable visible count — limit shown speakers, scroll for the rest (default 8)
-- Show only talking users, or show all users with dimmed idle ones ("Show idle users" setting)
-- Configurable idle timeout — passive users are removed from list after N seconds (default 5)
-- Auto-snap to top — list returns to most recent speakers after 10s idle or passthrough
-- Screen edge clamping — window cannot be dragged off-screen
-- Automatic system language detection (English / Chinese)
-- No taskbar entry — won't clutter your taskbar
-- Window auto-sizes to fit content on first launch
-- Scale setting affects both font size and window size
-- Settings persist across restarts — window position, transparency, visible count, etc. are saved
-- Rendered with GLFW + Dear ImGui (cimgui)
+- Adjustable window and text opacity, always-on-top, mouse passthrough
+- Recent speakers first, configurable visible count, idle timeout
+- Auto language detection (English / Chinese)
+- Settings persist across restarts
+- Rendered with GLFW + Dear ImGui
 
 ## Usage
 
@@ -42,9 +31,9 @@ Click the Settings button to open:
 
 | Setting | Description |
 |---|---|
-| **Window opacity** | Slider to adjust window background opacity (0.0 ~ 1.0). Capped at 0.2 unless &#34;Allow risky opacity&#34; is checked |
-| **Text opacity** | Slider to adjust text and UI element opacity (0.0 ~ 1.0), also capped at 0.2 when dangerous mode is off |
-| **Allow risky opacity** | When unchecked, both window and text opacity cannot go below 0.2 |
+| **Window opacity** | Slider to adjust window background opacity (0.0 ~ 1.0). |
+| **Text opacity** | Slider to adjust text and UI element opacity (0.0 ~ 1.0), capped at 0.2 when dangerous mode is off |
+| **Allow risky opacity** | When unchecked, text opacity cannot go below 0.2 |
 | **Scale** | Content scaling factor (1.0x ~ 4.0x). Affects both font size and window dimensions |
 | **Always on top** | Keep window above other windows |
 | **Mouse passthrough** | Let mouse clicks pass through the main overlay window (the settings panel stays interactive) |
