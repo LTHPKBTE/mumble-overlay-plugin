@@ -37,6 +37,7 @@ typedef struct {
     bool  show_recent_speakers; /* show recently-speaking users dimmed (only when !show_all_users) */
     float idle_user_alpha;    /* opacity for non-speaking users (0.0 – 1.0) */
     int   idle_timeout_seconds; /* seconds before a passive user is pruned (only when show_recent_speakers) */
+    bool  show_current_channel_only; /* only show users in the same channel as local user */
     bool  mumble_logging_enabled; /* whether to print log messages via MumbleAPI */
 } overlay_config_t;
 

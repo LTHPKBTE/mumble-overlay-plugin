@@ -72,6 +72,7 @@ void speaking_users_upsert(uint32_t user_id, const char *name, su_talking_state_
     }
     new_user->user_id = user_id;
     new_user->state   = state;
+    new_user->channel_id = -1;
     new_user->last_update = time(NULL);
     if (name != NULL) {
         strncpy(new_user->name, name, sizeof(new_user->name) - 1);
@@ -79,6 +80,35 @@ void speaking_users_upsert(uint32_t user_id, const char *name, su_talking_state_
     } else {
         new_user->name[0] = '\0';
     }
+    new_user->next = g_head;
+    g_head = new_user;
+    LOCK_REL();
+}
+
+void speaking_users_set_user_channel(uint32_t user_id, int32_t channel_id) {
+    LOCK_ACQ();
+    speaking_user_t *cur = g_head;
+    while (cur != NULL) {
+        if (cur->user_id == user_id) {
+            cur->channel_id = channel_id;
+            cur->last_update = time(NULL);
+            LOCK_REL();
+            return;
+        }
+        cur = cur->next;
+    }
+
+    /* User not yet tracked — create a placeholder with the channel set */
+    speaking_user_t *new_user = (speaking_user_t *)calloc(1, sizeof(speaking_user_t));
+    if (new_user == NULL) {
+        LOCK_REL();
+        return;
+    }
+    new_user->user_id    = user_id;
+    new_user->state      = SU_PASSIVE;
+    new_user->channel_id = channel_id;
+    new_user->last_update = time(NULL);
+    new_user->name[0]    = '\0';
     new_user->next = g_head;
     g_head = new_user;
     LOCK_REL();

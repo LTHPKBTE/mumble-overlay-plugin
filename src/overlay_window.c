@@ -245,6 +245,7 @@ overlay_config_t overlay_config_default(void) {
     cfg.show_recent_speakers = false;  /* off by default */
     cfg.idle_user_alpha   = 0.3f;
     cfg.idle_timeout_seconds = 5;
+    cfg.show_current_channel_only = false;
     cfg.mumble_logging_enabled = true;
     return cfg;
 }
@@ -323,6 +324,7 @@ static void overlay_config_save(void) {
     fprintf(f, "show_recent_speakers=%d\n", g_config.show_recent_speakers ? 1 : 0);
     fprintf(f, "idle_user_alpha=%.3f\n",(double)g_config.idle_user_alpha);
     fprintf(f, "idle_timeout_seconds=%d\n", g_config.idle_timeout_seconds);
+    fprintf(f, "show_current_channel_only=%d\n", g_config.show_current_channel_only ? 1 : 0);
     fprintf(f, "mumble_logging_enabled=%d\n", g_config.mumble_logging_enabled ? 1 : 0);
     fclose(f);
 }
@@ -370,6 +372,7 @@ static void overlay_config_load(overlay_config_t *cfg) {
         else if (sscanf(line, "show_recent_speakers=%d", &ival) == 1) cfg->show_recent_speakers = (ival != 0);
         else if (sscanf(line, "idle_user_alpha=%f", &fval) == 1)   cfg->idle_user_alpha = fval;
         else if (sscanf(line, "idle_timeout_seconds=%d", &ival) == 1) cfg->idle_timeout_seconds = ival;
+        else if (sscanf(line, "show_current_channel_only=%d", &ival) == 1) cfg->show_current_channel_only = (ival != 0);
         else if (sscanf(line, "dangerous_alpha_allowed=%d", &ival) == 1) cfg->dangerous_alpha_allowed = (ival != 0);
         else if (sscanf(line, "mumble_logging_enabled=%d", &ival) == 1) cfg->mumble_logging_enabled = (ival != 0);
     }
@@ -405,6 +408,7 @@ int overlay_window_init(const overlay_config_t *cfg) {
         g_config.show_all_users    = cfg->show_all_users;
         g_config.show_recent_speakers = cfg->show_recent_speakers;
         g_config.idle_user_alpha   = cfg->idle_user_alpha;
+        g_config.show_current_channel_only = cfg->show_current_channel_only;
         g_config.window_scale      = cfg->window_scale;
         g_config.mouse_passthrough = cfg->mouse_passthrough;
         g_config.always_on_top     = cfg->always_on_top;
@@ -1118,6 +1122,13 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 }
             }
 
+            ImGui::Spacing();
+            if (ImGui::Checkbox(LOC("仅显示当前频道用户", "Only show current channel"), &g_config.show_current_channel_only)) settings_changed = true;
+            if (g_config.show_current_channel_only) {
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                    LOC("仅显示与你在同一频道的用户。", "Only show users in the same channel as you."));
+            }
+
             ImGui::Separator();
 
             if (ImGui::Checkbox(LOC("在 Mumble 输出日志", "Log to Mumble console"), &g_config.mumble_logging_enabled)) settings_changed = true;
@@ -1166,6 +1177,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 g_config.show_recent_speakers = def.show_recent_speakers;
                 g_config.idle_user_alpha   = def.idle_user_alpha;
                 g_config.idle_timeout_seconds = def.idle_timeout_seconds;
+                g_config.show_current_channel_only = def.show_current_channel_only;
                 g_config.mumble_logging_enabled = def.mumble_logging_enabled;
                 g_config.window_x = def.window_x;
                 g_config.window_y = def.window_y;

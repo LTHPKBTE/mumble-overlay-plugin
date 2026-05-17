@@ -55,6 +55,7 @@
 static MumbleAPI           g_api;              /* Mumble API function table */
 static mumble_plugin_id_t  g_plugin_id;        /* Our plugin ID */
 static mumble_connection_t g_active_connection = -1; /* Current server connection */
+static mumble_channelid_t  g_local_channel_id  = -1; /* Our current channel (-1 = unknown) */
 
 /* Default logging to true before overlay_window_init loads config */
 static bool g_mumble_logging_enabled = true;
@@ -65,6 +66,9 @@ static bool g_mumble_logging_enabled = true;
 static const char *fetch_user_name(mumble_connection_t conn, mumble_userid_t user_id,
                                    char *buf, size_t buf_size);
 static void overlay_log_to_mumble(const char *msg);
+static void sync_user_channel(mumble_connection_t conn, mumble_userid_t user_id);
+static void sync_local_channel(mumble_connection_t conn);
+static void sync_all_user_channels(mumble_connection_t conn, mumble_userid_t *users, size_t count);
 
 /* ========================================================================
  * Poll callback — called from render thread to get active speakers
@@ -105,6 +109,22 @@ static int overlay_poll_speakers(void *userdata,
 
     if (count > max_count) count = max_count;
 
+    /* Channel filter: when show_current_channel_only is on, skip users not in our channel.
+     * g_local_channel_id is only written from the main thread; reading from render
+     * thread is safe (int32_t is atomic on all supported platforms). */
+    if (cfg.show_current_channel_only && g_local_channel_id >= 0) {
+        int filtered = 0;
+        for (int i = 0; i < count; i++) {
+            if (buffer[i].channel_id == g_local_channel_id) {
+                if (filtered != i) {
+                    buffer[filtered] = buffer[i];
+                }
+                filtered++;
+            }
+        }
+        count = filtered;
+    }
+
     for (int i = 0; i < count; i++) {
         user_ids[i] = buffer[i].user_id;
         strncpy(names[i], buffer[i].name, 127);
@@ -128,6 +148,7 @@ mumble_error_t mumble_init(mumble_plugin_id_t id) {
 
     speaking_users_init();
     g_active_connection = -1;
+    g_local_channel_id  = -1;
     g_mumble_logging_enabled = true;
 
     /* Check if we are already connected to a server (plugin loaded after connection).
@@ -154,8 +175,10 @@ mumble_error_t mumble_init(mumble_plugin_id_t id) {
                         const char *name = fetch_user_name(existing_conn, users[i], name_buf, sizeof(name_buf));
                         speaking_users_upsert(users[i], name, SU_PASSIVE);
                     }
+                    sync_all_user_channels(existing_conn, users, user_count);
                     g_api.freeMemory(g_plugin_id, users);
                 }
+                sync_local_channel(existing_conn);
             }
 
             if (!render_thread_is_running()) {
@@ -276,6 +299,7 @@ void mumble_onServerDisconnected(mumble_connection_t connection) {
     speaking_users_clear();
 
     g_active_connection = -1;
+    g_local_channel_id  = -1;
 }
 
 void mumble_onServerSynchronized(mumble_connection_t connection) {
@@ -294,8 +318,10 @@ void mumble_onServerSynchronized(mumble_connection_t connection) {
                 const char *name = fetch_user_name(connection, users[i], name_buf, sizeof(name_buf));
                 speaking_users_upsert(users[i], name, SU_PASSIVE);
             }
+            sync_all_user_channels(connection, users, user_count);
             g_api.freeMemory(g_plugin_id, users);
         }
+        sync_local_channel(connection);
     }
 
     /* Start render thread when we first connect */
@@ -338,6 +364,57 @@ void mumble_onUserAdded(mumble_connection_t connection, mumble_userid_t userID) 
     const char *name = fetch_user_name(connection, userID, name_buf, sizeof(name_buf));
     if (name != NULL && name[0] != '\0') {
         speaking_users_upsert(userID, name, SU_PASSIVE);
+    }
+    /* Also track which channel they're in */
+    sync_user_channel(connection, userID);
+}
+
+void mumble_onChannelEntered(mumble_connection_t connection,
+                              mumble_userid_t userID,
+                              mumble_channelid_t previousChannelID,
+                              mumble_channelid_t newChannelID) {
+    (void)previousChannelID;
+
+    /* Update the user's channel in our tracking list */
+    speaking_users_set_user_channel((uint32_t)userID, (int32_t)newChannelID);
+
+    /* Check if this is our own user – if so, update local channel */
+    mumble_userid_t local_id;
+    if (g_api.getLocalUserID(g_plugin_id, connection, &local_id) == MUMBLE_STATUS_OK
+        && (uint32_t)local_id == (uint32_t)userID) {
+        g_local_channel_id = (int32_t)newChannelID;
+        PLUGIN_LOGF("Local user moved to channel %d", (int)newChannelID);
+    }
+}
+
+/* ========================================================================
+ * Helpers: sync channel info into speaking_users list
+ * (ONLY call from main thread!)
+ * ======================================================================== */
+static void sync_user_channel(mumble_connection_t conn, mumble_userid_t user_id) {
+    mumble_channelid_t channel;
+    mumble_error_t err = g_api.getChannelOfUser(g_plugin_id, conn, user_id, &channel);
+    if (err == MUMBLE_STATUS_OK) {
+        speaking_users_set_user_channel((uint32_t)user_id, (int32_t)channel);
+    }
+}
+
+static void sync_local_channel(mumble_connection_t conn) {
+    mumble_userid_t local_id;
+    mumble_error_t err = g_api.getLocalUserID(g_plugin_id, conn, &local_id);
+    if (err == MUMBLE_STATUS_OK) {
+        mumble_channelid_t channel;
+        err = g_api.getChannelOfUser(g_plugin_id, conn, local_id, &channel);
+        if (err == MUMBLE_STATUS_OK) {
+            g_local_channel_id = (int32_t)channel;
+            PLUGIN_LOGF("Local user is in channel %d", (int)channel);
+        }
+    }
+}
+
+static void sync_all_user_channels(mumble_connection_t conn, mumble_userid_t *users, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        sync_user_channel(conn, users[i]);
     }
 }
 

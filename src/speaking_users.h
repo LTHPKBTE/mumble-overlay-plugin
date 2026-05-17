@@ -31,6 +31,7 @@ typedef enum {
 typedef struct speaking_user {
     uint32_t   user_id;
     char       name[128];        /* cached user name (set once from main thread) */
+    int32_t    channel_id;       /* ID of the channel the user is currently in (-1 = unknown) */
     su_talking_state_t state;
     time_t     last_update;
     struct speaking_user *next;
@@ -51,6 +52,12 @@ void speaking_users_destroy(void);
  * If user goes PASSIVE they remain in list for a timeout period.
  */
 void speaking_users_upsert(uint32_t user_id, const char *name, su_talking_state_t state);
+
+/*
+ * Set a user's channel ID. Creates the user entry if it doesn't exist.
+ * Callable from Mumble callbacks (main thread).
+ */
+void speaking_users_set_user_channel(uint32_t user_id, int32_t channel_id);
 
 /*
  * Get a snapshot of currently active speakers (non-passive, non-muted).
