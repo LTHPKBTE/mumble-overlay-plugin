@@ -387,6 +387,28 @@ void mumble_onChannelEntered(mumble_connection_t connection,
     }
 }
 
+void mumble_onChannelExited(mumble_connection_t connection,
+                             mumble_userid_t userID,
+                             mumble_channelid_t channelID) {
+    (void)connection;
+    /* A negative channelID means the user fully disconnected from the server.
+     * Remove them so they don't linger as a "dead" duplicate when they reconnect
+     * with a new user_id. */
+    if (channelID < 0) {
+        speaking_users_remove((uint32_t)userID);
+        PLUGIN_LOGF("User %d left the server (removed from list)", (int)userID);
+    }
+}
+
+void mumble_onUserRemoved(mumble_connection_t connection,
+                           mumble_userid_t userID) {
+    (void)connection;
+    /* User disconnected from the server or was removed from the user model.
+     * Delete them from our tracking list to prevent stale duplicates. */
+    speaking_users_remove((uint32_t)userID);
+    PLUGIN_LOGF("User %d removed from server model (removed from list)", (int)userID);
+}
+
 /* ========================================================================
  * Helpers: sync channel info into speaking_users list
  * (ONLY call from main thread!)

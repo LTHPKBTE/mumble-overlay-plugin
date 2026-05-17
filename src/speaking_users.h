@@ -60,6 +60,12 @@ void speaking_users_upsert(uint32_t user_id, const char *name, su_talking_state_
 void speaking_users_set_user_channel(uint32_t user_id, int32_t channel_id);
 
 /*
+ * Remove a user from the tracking list entirely (e.g. on disconnect).
+ * Callable from Mumble callbacks (main thread).
+ */
+void speaking_users_remove(uint32_t user_id);
+
+/*
  * Get a snapshot of currently active speakers (non-passive, non-muted).
  * Returns number of speakers written to `out_array`, up to `max_count`.
  * Callable from render thread.

@@ -114,6 +114,27 @@ void speaking_users_set_user_channel(uint32_t user_id, int32_t channel_id) {
     LOCK_REL();
 }
 
+void speaking_users_remove(uint32_t user_id) {
+    LOCK_ACQ();
+    speaking_user_t *prev = NULL;
+    speaking_user_t *cur = g_head;
+    while (cur != NULL) {
+        if (cur->user_id == user_id) {
+            if (prev != NULL) {
+                prev->next = cur->next;
+            } else {
+                g_head = cur->next;
+            }
+            free(cur);
+            LOCK_REL();
+            return;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+    LOCK_REL();
+}
+
 int speaking_users_get_active(speaking_user_t *out_array, int max_count, int timeout_seconds) {
     int count = 0;
     time_t now = time(NULL);
