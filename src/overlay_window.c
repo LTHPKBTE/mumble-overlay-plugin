@@ -335,8 +335,6 @@ int overlay_window_init(const overlay_config_t *cfg) {
         if (cfg->max_visible_speakers > 0)
             g_config.max_visible_speakers = cfg->max_visible_speakers;
         g_config.dangerous_alpha_allowed = cfg->dangerous_alpha_allowed;
-        g_config.show_idle_users   = cfg->show_idle_users;
-        g_config.idle_user_alpha   = cfg->idle_user_alpha;
         g_config.idle_timeout_seconds = cfg->idle_timeout_seconds;
         g_config.mumble_logging_enabled = cfg->mumble_logging_enabled;
     }
@@ -352,13 +350,10 @@ int overlay_window_init(const overlay_config_t *cfg) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
-    glfwWindowHint(GLFW_FLOATING, g_config.always_on_top ? GLFW_TRUE : GLFW_FALSE);
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    
-    /* FIX: 隐藏创建以防在任务栏闪烁，待设置完样式后再显示 */
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);    /* no native title bar */
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); /* 先隐藏，配置好再显示，防止任务栏闪烁 */
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
     glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
 
     g_window = glfwCreateWindow(g_config.window_width, g_config.window_height,
@@ -370,19 +365,6 @@ int overlay_window_init(const overlay_config_t *cfg) {
 
     glfwSetWindowPos(g_window, g_config.window_x, g_config.window_y);
 
-#ifdef _WIN32
-    /* 在窗口显示之前立刻赋予 ToolWindow 样式，使其彻底无缘任务栏 */
-    {
-        HWND hwnd = glfwGetWin32Window(g_window);
-        if (hwnd != NULL) {
-            LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-            exstyle |= WS_EX_TOOLWINDOW;
-            exstyle &= ~WS_EX_APPWINDOW;
-            SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
-        }
-    }
-#endif
-
     glfwMakeContextCurrent(g_window);
     glfwSwapInterval(1);
 
@@ -392,19 +374,16 @@ int overlay_window_init(const overlay_config_t *cfg) {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = NULL;
 
-    /* Enable viewports so the settings panel can be a true separate OS window,
-     * not constrained by the main overlay's GLFW window boundaries. */
+    /* Enable viewports so the settings panel can be a true separate OS window */
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
-    /* Load CJK font for Chinese / Japanese characters */
+    /* Load CJK font */
     load_cjk_font();
 
     ImGuiStyle& style = ImGui::GetStyle();
     ImGui::StyleColorsDark();
     style.Alpha = g_config.text_alpha;
     style.Colors[ImGuiCol_WindowBg].w = g_config.alpha;
-
-    /* Apply window scale to font */
     io.FontGlobalScale = g_config.window_scale;
 
     /* --- Backend init --- */
@@ -429,27 +408,20 @@ int overlay_window_init(const overlay_config_t *cfg) {
         return OW_ERR_IMGUI;
     }
 
-    /* Install close callback AFTER ImGui_ImplGlfw_InitForOpenGL so it doesn't get overwritten */
+    /* Install close callback */
     glfwSetWindowCloseCallback(g_window, on_window_close);
 
-    /* Apply full config (topmost, passthrough, taskbar style) right after creation */
+    /* Apply config (passthrough, toolwindow, topmost) via native/glfw APIs safely */
     apply_config_to_window();
 
 #ifdef _WIN32
-    /* Install global low-level keyboard hook for Ctrl+Shift+P / Ctrl+Shift+H.
-     * Must be done on the same thread that will pump messages (render thread). */
     g_keyboard_hook = SetWindowsHookEx(WH_KEYBOARD_LL, low_level_keyboard_proc,
                                        GetModuleHandle(NULL), 0);
-    if (g_keyboard_hook == NULL) {
-        fprintf(stderr, "Failed to install global keyboard hook (error %lu)\n",
-                (unsigned long)GetLastError());
-        /* Non-fatal: overlay still works, just global hotkeys won't */
-    }
 #endif
 
     g_first_frame = true;
 
-    /* FIX: 所有状态配置好后，最后显示主窗口 */
+    /* 渲染初始状态应用完毕后，再将窗口呈现 */
     if (!g_window_hidden) {
         glfwShowWindow(g_window);
     }
@@ -458,56 +430,68 @@ int overlay_window_init(const overlay_config_t *cfg) {
 }
 
 /* ========================================================================
- * Window close callback – hide instead of destroying
+ * Window close callback
  * ======================================================================== */
 static void on_window_close(GLFWwindow *win) {
     (void)win;
     g_window_hidden = true;
+    g_user_hid_window = true;
     glfwHideWindow(g_window);
     glfwSetWindowShouldClose(g_window, GLFW_FALSE);
 }
 
 /* ========================================================================
- * Apply current config to the GLFW window
+ * Apply current config to the GLFW window natively
  * ======================================================================== */
 static void apply_config_to_window(void) {
     ImGuiStyle& style = ImGui::GetStyle();
     style.Alpha = g_config.text_alpha;
     style.Colors[ImGuiCol_WindowBg].w = g_config.alpha;
 
-    glfwSetWindowAttrib(g_window, GLFW_FLOATING,
-                        g_config.always_on_top ? GLFW_TRUE : GLFW_FALSE);
+    /* 让 GLFW 内置函数妥善处理“穿透”和“置顶”，避免破坏 DWM 的透明合并逻辑！ */
+    glfwSetWindowAttrib(g_window, GLFW_FLOATING, g_config.always_on_top ? GLFW_TRUE : GLFW_FALSE);
+
+#if defined(GLFW_MOUSE_PASSTHROUGH)
+    glfwSetWindowAttrib(g_window, GLFW_MOUSE_PASSTHROUGH, g_config.mouse_passthrough ? GLFW_TRUE : GLFW_FALSE);
+#else
+#ifdef _WIN32
+    /* 老版本 GLFW 没有穿透属性时的兼容处理 */
+    HWND hwnd = glfwGetWin32Window(g_window);
+    if (hwnd != NULL) {
+        LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+        if (g_config.mouse_passthrough) {
+            exstyle |= WS_EX_TRANSPARENT | WS_EX_LAYERED;
+        } else {
+            exstyle &= ~WS_EX_TRANSPARENT;
+        }
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
+        
+        if (g_config.mouse_passthrough) {
+            /* 如果强行加上了 LAYERED，必须设定 Alpha 的混合规则，否则窗口会变成彻底的纯黑 */
+            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+        }
+        
+        SetWindowPos(hwnd, g_config.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
+                     0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+#endif
+#endif
 
 #ifdef _WIN32
+    /* 单独将它从任务栏抹掉 */
     {
         HWND hwnd = glfwGetWin32Window(g_window);
         if (hwnd != NULL) {
             LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
-            
-            exstyle |= WS_EX_LAYERED;
-            if (g_config.mouse_passthrough) {
-                exstyle |= WS_EX_TRANSPARENT;   /* full click-through */
-            } else {
-                exstyle &= ~WS_EX_TRANSPARENT;  /* per-pixel hit-test */
+            LONG_PTR needed = exstyle | WS_EX_TOOLWINDOW;
+            needed &= ~WS_EX_APPWINDOW;
+            if (exstyle != needed) {
+                SetWindowLongPtr(hwnd, GWL_EXSTYLE, needed);
+                SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
             }
-            
-            exstyle |= WS_EX_TOOLWINDOW;
-            exstyle &= ~WS_EX_APPWINDOW;
-            
-            SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
-
-            /* FIX: 加入 SWP_FRAMECHANGED 标志是核心所在！
-             * 否则动态修改 WS_EX_TRANSPARENT (鼠标穿透) 不会被 DWM 刷新，导致属性失效。
-             * 同时也可以保证 HWND_TOPMOST 的变更强制生效。*/
-            SetWindowPos(hwnd,
-                         g_config.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
-                         0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         }
     }
-#else
-    glfwSetWindowAttrib(g_window, GLFW_MOUSE_PASSTHROUGH,
-                        g_config.mouse_passthrough ? GLFW_TRUE : GLFW_FALSE);
 #endif
 }
 
@@ -515,28 +499,19 @@ static void apply_config_to_window(void) {
  * Render one frame
  * ======================================================================== */
 bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
-    /* ---- Window hidden by user?  Sleep to save CPU, don't exit ---- */
-    if (g_window_hidden) {
-        glfwHideWindow(g_window);
-        /* Clear the close-request that may have been set by glfw */
-        glfwSetWindowShouldClose(g_window, GLFW_FALSE);
-        /* Reset user-hid flag after processing */
-        g_user_hid_window = false;
-        glfwWaitEventsTimeout(0.25);
-        return true;
-    }
-
     if (glfwWindowShouldClose(g_window)) {
         return false;
     }
 
+    /* FIX: 不要在窗口隐藏时使用 sleep 直接 return true！
+     * 否则跳帧会导致 ImGui 的按键响应及设置视口(Viewports)整体失去泵流而彻底冻结。*/
     glfwPollEvents();
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    /* ---- Process global keyboard shortcuts (Ctrl+Shift+P / Ctrl+Shift+H) ---- */
+    /* ---- Process global keyboard shortcuts ---- */
 #ifdef _WIN32
     if (InterlockedCompareExchange(&g_hotkey_toggle_passthrough, 0, 1) == 1) {
         g_config.mouse_passthrough = !g_config.mouse_passthrough;
@@ -551,18 +526,15 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         }
     }
 #else
-    /* Fallback: ImGui key polling (only works when GLFW window has focus) */
     {
         ImGuiIO& io = ImGui::GetIO();
         bool ctrl  = io.KeyCtrl  || ImGui::IsKeyDown(ImGuiKey_LeftCtrl)  || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
         bool shift = io.KeyShift || ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
 
-        /* Ctrl+Shift+P -> toggle mouse passthrough */
         if (ImGui::IsKeyPressed(ImGuiKey_P) && ctrl && shift) {
             g_config.mouse_passthrough = !g_config.mouse_passthrough;
             apply_config_to_window();
         }
-        /* Ctrl+Shift+H → show hidden window */
         if (ImGui::IsKeyPressed(ImGuiKey_H) && ctrl && shift && g_window_hidden) {
             g_window_hidden = false;
             g_user_hid_window = false;
@@ -571,7 +543,8 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         }
     }
 #endif
-    /* ---- Handle request flags (set from Mumble main thread) ---- */
+
+    /* ---- Handle request flags ---- */
     if (g_request_show && g_window_hidden) {
         g_request_show = false;
         g_window_hidden = false;
@@ -595,170 +568,25 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         }
     }
 
-    /* ================================================================
-     * Main overlay panel — auto-sized to fit content
-     * ================================================================ */
-    ImGuiWindowFlags main_flags = ImGuiWindowFlags_NoTitleBar
-                                | ImGuiWindowFlags_NoResize
-                                | ImGuiWindowFlags_NoCollapse
-                                | ImGuiWindowFlags_NoBringToFrontOnFocus
-                                | ImGuiWindowFlags_NoSavedSettings
-                                | ImGuiWindowFlags_AlwaysAutoResize;
-
-    /* When mouse passthrough is active, make main panel non-interactive
-     * so clicks fall through to windows behind. The settings window is
-     * separate and remains interactive. */
-    if (g_config.mouse_passthrough) {
-        main_flags |= ImGuiWindowFlags_NoInputs;
-    }
-
-    ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 60.0f), ImVec2(FLT_MAX, FLT_MAX));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f));
-    ImGui::Begin("SpeakingOverlayMain", NULL, main_flags);
-    ImGui::PopStyleVar();
-
-    /* ================================================================
-     * Custom title bar — full-width draggable area (hidden in passthrough)
-     * ================================================================ */
-    if (!g_config.mouse_passthrough) {
-        /* Full-width drag handle + buttons (hidden when passthrough is active) */
-        float title_h = ImGui::GetFrameHeight() + 4.0f;
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
-
-        /* Draw the title text */
-        ImVec2 title_pos = ImGui::GetCursorScreenPos();
-        ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), LOC("说话列表", "Speaking Users"));
-
-        /* Place buttons at the right side */
-        float avail_w = ImGui::GetContentRegionAvail().x;
-        float btn_w = ImGui::CalcTextSize(LOC("设置", "Settings")).x + 12.0f;
-        float close_w = ImGui::CalcTextSize("X").x + 12.0f;
-        float btn_area = btn_w + 4.0f + close_w;
-
-        ImGui::SameLine(0.0f, -1.0f);
-        float cx = ImGui::GetCursorPosX();
-        ImVec2 av = ImGui::GetContentRegionAvail();
-        float btn_x = cx + av.x - btn_area;
-        if (btn_x < cx) btn_x = cx;
-        ImGui::SetCursorPosX(btn_x);
-
-        if (ImGui::SmallButton(LOC("设置", "Settings"))) {
-            g_settings_open = !g_settings_open;
-        }
-        ImGui::SameLine(0.0f, 2.0f);
-        ImGui::SetCursorPosX(btn_x + btn_w + 4.0f);
-        if (ImGui::SmallButton("X")) {
-            g_user_hid_window = true;
-            g_window_hidden = true;
-            glfwHideWindow(g_window);
-            g_drag_active = false;
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s",
-                LOC("隐藏窗口（插件继续运行）", "Hide window (plugin keeps running)"));
-        }
-
-        /* ---- Full-width drag handling ---- */
-        /* The drag area covers from the left edge of the title bar up to
-           where the Settings/Close buttons start, so the buttons aren't
-           swallowed by the drag handler. */
-        {
-            float drag_w = btn_x - title_pos.x;
-            if (drag_w < 20.0f) drag_w = 20.0f;
-            ImVec2 drag_min = ImVec2(title_pos.x, title_pos.y - 2.0f);
-            ImGui::SetCursorScreenPos(drag_min);
-            ImGui::InvisibleButton("##title_drag", ImVec2(drag_w, title_h));
-            bool hovered = ImGui::IsItemHovered();
-            bool active  = ImGui::IsItemActive();
-
-            if (hovered) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-            }
-
-            if (ImGui::IsItemActivated()) {
-                g_drag_active = true;
-                glfwGetWindowPos(g_window, &g_drag_win_x, &g_drag_win_y);
-                ImVec2 mouse = ImGui::GetIO().MousePos;
-                g_drag_mouse_x = mouse.x;
-                g_drag_mouse_y = mouse.y;
-            }
-
-            if (g_drag_active && active) {
-                ImVec2 mouse = ImGui::GetIO().MousePos;
-                int dx = (int)(mouse.x - g_drag_mouse_x);
-                int dy = (int)(mouse.y - g_drag_mouse_y);
-                int new_x = g_drag_win_x + dx;
-                int new_y = g_drag_win_y + dy;
-
-                /* Clamp to screen edges */
-                int fb_w, fb_h;
-                glfwGetWindowSize(g_window, &fb_w, &fb_h);
-                int mon_count;
-                GLFWmonitor **mons = glfwGetMonitors(&mon_count);
-                GLFWmonitor *monitor = NULL;
-                int best_area = -1;
-                for (int mi = 0; mi < mon_count; mi++) {
-                    int mx, my, mw, mh;
-                    glfwGetMonitorWorkarea(mons[mi], &mx, &my, &mw, &mh);
-                    int ix = (new_x > mx + mw) ? 0 : ((new_x + fb_w < mx) ? 0 :
-                             (new_x < mx ? mx : new_x));
-                    int iy = (new_y > my + mh) ? 0 : ((new_y + fb_h < my) ? 0 :
-                             (new_y < my ? my : new_y));
-                    int iw = (new_x + fb_w > mx + mw ? mx + mw : new_x + fb_w) - ix;
-                    int ih = (new_y + fb_h > my + mh ? my + mh : new_y + fb_h) - iy;
-                    int area = iw * ih;
-                    if (area > best_area) {
-                        best_area = area;
-                        monitor = mons[mi];
-                    }
-                }
-                if (monitor) {
-                    int mx, my, mw, mh;
-                    glfwGetMonitorWorkarea(monitor, &mx, &my, &mw, &mh);
-                    int min_visible = fb_w / 5;
-                    if (new_x + min_visible < mx) new_x = mx - min_visible;
-                    if (new_x + fb_w - min_visible > mx + mw) new_x = mx + mw - fb_w + min_visible;
-                    if (new_y < my) new_y = my;
-                    if (new_y + 20 > my + mh) new_y = my + mh - 20;
-                }
-                g_config.window_x = new_x;
-                g_config.window_y = new_y;
-                glfwSetWindowPos(g_window, new_x, new_y);
-            }
-
-            if (!active) {
-                g_drag_active = false;
-            }
-        }
-    }
-
-    if (!g_config.mouse_passthrough) {
-        ImGui::Separator();
-    }
-
-    /* ---- Speaking users list ---- */
+    /* ---- 无论主窗口隐没隐藏，都轮询发声名单 ---- */
     uint32_t user_ids[64];
     char     names[64][128];
     int      states[64];
     int user_count = poll ? poll(userdata, user_ids, names, states, 64) : 0;
 
-    /* ---- Track speaking recency — update timestamp order ---- */
     {
         double now = ImGui::GetTime();
         for (int i = 0; i < user_count; i++) {
-            /* Find this user in existing timestamps; if not found, append */
             int found = -1;
             for (int j = 0; j < g_user_timestamp_count; j++) {
                 if (g_user_timestamps[j] == user_ids[i]) { found = j; break; }
             }
             if (found < 0) {
-                /* New speaker — add at end, will bubble up */
                 if (g_user_timestamp_count < 64) {
                     g_user_timestamps[g_user_timestamp_count++] = user_ids[i];
                     found = g_user_timestamp_count - 1;
                 }
             }
-            /* Move this user to the front (most recent) */
             if (found > 0) {
                 uint32_t tmp = g_user_timestamps[found];
                 memmove(&g_user_timestamps[1], &g_user_timestamps[0],
@@ -768,12 +596,10 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         }
     }
 
-    /* ---- Build sorted display order: recently-active first ---- */
     int  display_idx[64];
     int  display_count = 0;
     {
         bool used[64] = {false};
-        /* First, walk timestamp order to pick up active speakers */
         for (int t = 0; t < g_user_timestamp_count && display_count < user_count; t++) {
             for (int i = 0; i < user_count; i++) {
                 if (!used[i] && user_ids[i] == g_user_timestamps[t]) {
@@ -783,7 +609,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 }
             }
         }
-        /* Any remaining active speakers not in timestamp list (shouldn't happen) */
         for (int i = 0; i < user_count && display_count < user_count; i++) {
             if (!used[i]) {
                 used[i] = true;
@@ -792,7 +617,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         }
     }
 
-    /* ---- Auto-show window when users start speaking ---- */
+    /* ---- 自动呼出逻辑 ---- */
     if (g_window_hidden && !g_user_hid_window && user_count > 0) {
         if (!g_user_saw_speaking_after_hide) {
             g_user_saw_speaking_after_hide = true;
@@ -803,152 +628,194 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         g_user_saw_speaking_after_hide = false;
     }
 
-    /* ---- Determine whether to snap scroll to top ---- */
-    bool should_snap_to_top = false;
-    /* Track mouse hover/activity */
-    bool mouse_hovering = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
-    if (mouse_hovering || ImGui::IsAnyItemActive() || ImGui::IsAnyItemFocused()) {
-        g_last_mouse_activity_time = ImGui::GetTime();
-    }
-    /* Auto-snap: passthrough mode active, OR mouse left window >10s without manual scroll */
-    double idle_seconds = ImGui::GetTime() - g_last_mouse_activity_time;
-    if (g_config.mouse_passthrough || idle_seconds > 10.0) {
-        if (!g_scrolled_by_user) {
-            should_snap_to_top = true;
-        }
-    } else {
-        /* User is active — don't snap; reset scroll-override flag */
-        g_scrolled_by_user = false;
-    }
+    /* ================================================================
+     * 主面板绘制区
+     * ================================================================ */
+    if (!g_window_hidden) {
+        ImGuiWindowFlags main_flags = ImGuiWindowFlags_NoTitleBar
+                                    | ImGuiWindowFlags_NoResize
+                                    | ImGuiWindowFlags_NoCollapse
+                                    | ImGuiWindowFlags_NoBringToFrontOnFocus
+                                    | ImGuiWindowFlags_NoSavedSettings
+                                    | ImGuiWindowFlags_AlwaysAutoResize;
 
-    if (user_count == 0) {
-        ImGui::TextColored(ImVec4(0.45f, 0.45f, 0.45f, 1.0f),
-                      LOC("  当前没人说话...", "  Nobody is speaking..."));
-    } else {
-        /* ---- Scrollable speaker list ---- */
-        float avail_h = ImGui::GetContentRegionAvail().y;
-        if (avail_h < 30.0f) avail_h = 30.0f;
-        ImGui::BeginChild("SpeakerList", ImVec2(0, avail_h), false,
-                          ImGuiWindowFlags_NoSavedSettings);
-
-        /* Handle scroll snapping */
-        if (should_snap_to_top) {
-            ImGui::SetScrollHereY(0.0f);
-        } else {
-            /* Detect user-initiated scroll */
-            float cur_scroll = ImGui::GetScrollY();
-            if (cur_scroll != g_last_scroll_y && cur_scroll > 0.0f) {
-                if (!g_scrolled_by_user) {
-                    g_scrolled_by_user = true;
-                }
-                g_last_mouse_activity_time = ImGui::GetTime();
-            }
-            g_last_scroll_y = cur_scroll;
+        if (g_config.mouse_passthrough) {
+            main_flags |= ImGuiWindowFlags_NoInputs;
         }
 
-        int max_vis = g_config.max_visible_speakers;
-        int pinned_count = (display_count < max_vis) ? display_count : max_vis;
+        ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 60.0f), ImVec2(FLT_MAX, FLT_MAX));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f));
+        ImGui::Begin("SpeakingOverlayMain", NULL, main_flags);
+        ImGui::PopStyleVar();
 
-        for (int di = 0; di < display_count; di++) {
-            int i = display_idx[di];
+        if (!g_config.mouse_passthrough) {
+            float title_h = ImGui::GetFrameHeight() + 4.0f;
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
 
-            /* Skip passive/muted users if show_idle_users is off */
-            bool is_idle = (states[i] == 0 || states[i] == 4);
-            if (is_idle && !g_config.show_idle_users) {
-                continue;
-            }
+            ImVec2 title_pos = ImGui::GetCursorScreenPos();
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), LOC("说话列表", "Speaking Users"));
 
-            ImVec4 col;
-            const char *status_text;
-            switch (states[i]) {
-                case 1: /* SU_TALKING */
-                    col = ImVec4(0.2f, 1.0f, 0.3f, 1.0f);
-                    status_text = LOC("说话", "Talking");
-                    break;
-                case 2: /* SU_WHISPERING */
-                    col = ImVec4(1.0f, 0.9f, 0.2f, 1.0f);
-                    status_text = LOC("密语", "Whisper");
-                    break;
-                case 3: /* SU_SHOUTING */
-                    col = ImVec4(1.0f, 0.25f, 0.25f, 1.0f);
-                    status_text = LOC("喊话", "Shout");
-                    break;
-                default:
-                    col = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
-                    status_text = LOC("空闲", "Idle");
-                    break;
-            }
-
-            /* Recent speakers section header (first pinned_count) */
-            if (di == pinned_count) {
-                ImGui::Separator();
-                ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f),
-                    "%s", LOC("---------- 更多 ----------", "--- more ---"));
-            }
-
-            /* Dimmed style for overflow speakers */
-            bool is_pinned = (di < pinned_count);
-            ImVec4 name_col = col;
-            if (!is_pinned) {
-                name_col.w *= 0.7f;
-            }
-
-            /* Apply idle user dimming */
-            if (is_idle) {
-                name_col.w *= g_config.idle_user_alpha;
-            }
-
-            /* User row: colored bullet + name, status right-aligned via columns */
-            ImGui::TextColored(name_col, "  \xe2\x97\x8f  %s  ", names[i]);
+            float btn_w = ImGui::CalcTextSize(LOC("设置", "Settings")).x + 12.0f;
+            float close_w = ImGui::CalcTextSize("X").x + 12.0f;
+            float btn_area = btn_w + 4.0f + close_w;
 
             ImGui::SameLine(0.0f, -1.0f);
-            float text_w = ImGui::CalcTextSize(status_text).x;
-            float avail_w = ImGui::GetContentRegionAvail().x;
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail_w - text_w);
-            ImVec4 st_col = ImVec4(0.5f, 0.5f, 0.5f, is_pinned ? 1.0f : 0.5f);
-            if (is_idle) {
-                st_col.w *= g_config.idle_user_alpha;
+            float cx = ImGui::GetCursorPosX();
+            ImVec2 av = ImGui::GetContentRegionAvail();
+            float btn_x = cx + av.x - btn_area;
+            if (btn_x < cx) btn_x = cx;
+            ImGui::SetCursorPosX(btn_x);
+
+            if (ImGui::SmallButton(LOC("设置", "Settings"))) {
+                g_settings_open = !g_settings_open;
             }
-            ImGui::TextColored(st_col, "%s", status_text);
+            ImGui::SameLine(0.0f, 2.0f);
+            ImGui::SetCursorPosX(btn_x + btn_w + 4.0f);
+            if (ImGui::SmallButton("X")) {
+                g_user_hid_window = true;
+                g_window_hidden = true;
+                glfwHideWindow(g_window);
+                g_drag_active = false;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", LOC("隐藏窗口（插件继续运行）", "Hide window (plugin keeps running)"));
+            }
+
+            {
+                float drag_w = btn_x - title_pos.x;
+                if (drag_w < 20.0f) drag_w = 20.0f;
+                ImVec2 drag_min = ImVec2(title_pos.x, title_pos.y - 2.0f);
+                ImGui::SetCursorScreenPos(drag_min);
+                ImGui::InvisibleButton("##title_drag", ImVec2(drag_w, title_h));
+                bool hovered = ImGui::IsItemHovered();
+                bool active  = ImGui::IsItemActive();
+
+                if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+
+                if (ImGui::IsItemActivated()) {
+                    g_drag_active = true;
+                    glfwGetWindowPos(g_window, &g_drag_win_x, &g_drag_win_y);
+                    ImVec2 mouse = ImGui::GetIO().MousePos;
+                    g_drag_mouse_x = mouse.x;
+                    g_drag_mouse_y = mouse.y;
+                }
+
+                if (g_drag_active && active) {
+                    ImVec2 mouse = ImGui::GetIO().MousePos;
+                    int new_x = g_drag_win_x + (int)(mouse.x - g_drag_mouse_x);
+                    int new_y = g_drag_win_y + (int)(mouse.y - g_drag_mouse_y);
+                    g_config.window_x = new_x;
+                    g_config.window_y = new_y;
+                    glfwSetWindowPos(g_window, new_x, new_y);
+                }
+
+                if (!active) {
+                    g_drag_active = false;
+                }
+            }
         }
 
-        ImGui::EndChild();
-    }
+        if (!g_config.mouse_passthrough) ImGui::Separator();
 
-    /* ---- Auto-size the GLFW window to fit content (every frame, skip during drag) ---- */
-    if (!g_drag_active) {
-        float content_h = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y * 2.0f
-                          + ImGui::GetStyle().FramePadding.y * 2.0f;
-        float scale = g_config.window_scale;
-        if (scale < 0.01f) scale = 1.0f;
-        int target_h = (int)(content_h / scale + 0.5f);
-        if (target_h < 40) target_h = 40;
-        int cur_w, cur_h;
-        glfwGetWindowSize(g_window, &cur_w, &cur_h);
-        /* Let ImGui's AlwaysAutoResize handle width naturally */
-        glfwSetWindowSize(g_window, cur_w, target_h);
-        g_config.window_width = cur_w;
-        g_config.window_height = target_h;
-        g_first_frame = false;
-    }
+        bool should_snap_to_top = false;
+        bool mouse_hovering = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
+        if (mouse_hovering || ImGui::IsAnyItemActive() || ImGui::IsAnyItemFocused()) {
+            g_last_mouse_activity_time = ImGui::GetTime();
+        }
+        double idle_seconds = ImGui::GetTime() - g_last_mouse_activity_time;
+        if (g_config.mouse_passthrough || idle_seconds > 10.0) {
+            if (!g_scrolled_by_user) should_snap_to_top = true;
+        } else {
+            g_scrolled_by_user = false;
+        }
 
-    ImGui::End();
+        if (user_count == 0) {
+            ImGui::TextColored(ImVec4(0.45f, 0.45f, 0.45f, 1.0f), LOC("  当前没人说话...", "  Nobody is speaking..."));
+        } else {
+            float avail_h = ImGui::GetContentRegionAvail().y;
+            if (avail_h < 30.0f) avail_h = 30.0f;
+            ImGui::BeginChild("SpeakerList", ImVec2(0, avail_h), false, ImGuiWindowFlags_NoSavedSettings);
+
+            if (should_snap_to_top) {
+                ImGui::SetScrollHereY(0.0f);
+            } else {
+                float cur_scroll = ImGui::GetScrollY();
+                if (cur_scroll != g_last_scroll_y && cur_scroll > 0.0f) {
+                    g_scrolled_by_user = true;
+                    g_last_mouse_activity_time = ImGui::GetTime();
+                }
+                g_last_scroll_y = cur_scroll;
+            }
+
+            int max_vis = g_config.max_visible_speakers;
+            int pinned_count = (display_count < max_vis) ? display_count : max_vis;
+
+            for (int di = 0; di < display_count; di++) {
+                int i = display_idx[di];
+                bool is_idle = (states[i] == 0 || states[i] == 4);
+                if (is_idle && !g_config.show_idle_users) continue;
+
+                ImVec4 col;
+                const char *status_text;
+                switch (states[i]) {
+                    case 1: col = ImVec4(0.2f, 1.0f, 0.3f, 1.0f); status_text = LOC("说话", "Talking"); break;
+                    case 2: col = ImVec4(1.0f, 0.9f, 0.2f, 1.0f); status_text = LOC("密语", "Whisper"); break;
+                    case 3: col = ImVec4(1.0f, 0.25f, 0.25f, 1.0f); status_text = LOC("喊话", "Shout"); break;
+                    default: col = ImVec4(0.7f, 0.7f, 0.7f, 1.0f); status_text = LOC("空闲", "Idle"); break;
+                }
+
+                if (di == pinned_count) {
+                    ImGui::Separator();
+                    ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), "%s", LOC("---------- 更多 ----------", "--- more ---"));
+                }
+
+                bool is_pinned = (di < pinned_count);
+                ImVec4 name_col = col;
+                if (!is_pinned) name_col.w *= 0.7f;
+                if (is_idle) name_col.w *= g_config.idle_user_alpha;
+
+                ImGui::TextColored(name_col, "  \xe2\x97\x8f  %s  ", names[i]);
+
+                ImGui::SameLine(0.0f, -1.0f);
+                float text_w = ImGui::CalcTextSize(status_text).x;
+                float avail_w = ImGui::GetContentRegionAvail().x;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail_w - text_w);
+                ImVec4 st_col = ImVec4(0.5f, 0.5f, 0.5f, is_pinned ? 1.0f : 0.5f);
+                if (is_idle) st_col.w *= g_config.idle_user_alpha;
+                ImGui::TextColored(st_col, "%s", status_text);
+            }
+            ImGui::EndChild();
+        }
+
+        /* 仅当未拖拽时才自动更新窗口大小 */
+        if (!g_drag_active) {
+            float content_h = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y * 2.0f
+                              + ImGui::GetStyle().FramePadding.y * 2.0f;
+            float scale = g_config.window_scale;
+            if (scale < 0.01f) scale = 1.0f;
+            int target_h = (int)(content_h / scale + 0.5f);
+            if (target_h < 40) target_h = 40;
+            int cur_w, cur_h;
+            glfwGetWindowSize(g_window, &cur_w, &cur_h);
+            glfwSetWindowSize(g_window, cur_w, target_h);
+            g_config.window_width = cur_w;
+            g_config.window_height = target_h;
+            g_first_frame = false;
+        }
+
+        ImGui::End();
+    }
 
     /* ================================================================
-     * Settings panel — rendered AFTER main, so it floats on top
-     * (separate ImGui window, not affected by NoInputs)
+     * 设置面板 (独立渲染不受主窗口隐身影响)
      * ================================================================ */
     if (g_settings_open) {
         ImGui::Begin(LOC("设置", "Settings"), &g_settings_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
-            /* ---- Window + Text transparency ---- */
             float a = g_config.alpha;
-            ImGui::SliderFloat(LOC("窗口透明度", "Window opacity"), &a,
-                          0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
+            ImGui::SliderFloat(LOC("窗口透明度", "Window opacity"), &a, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
             float ta = g_config.text_alpha;
-            ImGui::SliderFloat(LOC("文字透明度", "Text opacity"), &ta,
-                          0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
+            ImGui::SliderFloat(LOC("文字透明度", "Text opacity"), &ta, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
 
-            /* Safety: cap both if dangerous not allowed */
             bool any_low = (a < 0.2f || ta < 0.2f);
             if (any_low && !g_config.dangerous_alpha_allowed) {
                 if (a < 0.2f) a = 0.2f;
@@ -957,21 +824,15 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             g_config.alpha = a;
             g_config.text_alpha = ta;
 
-            ImGui::Checkbox(LOC("允许危险透明度", "Allow risky opacity"),
-                           &g_config.dangerous_alpha_allowed);
+            ImGui::Checkbox(LOC("允许危险透明度", "Allow risky opacity"), &g_config.dangerous_alpha_allowed);
             if (any_low && !g_config.dangerous_alpha_allowed) {
                 ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
-                    LOC("窗口和文字透明度不低于 0.2。\n"
-                        "勾选后可调低。",
-                        "Window & text opacity capped at 0.2.\n"
-                        "Check to allow lower values."));
+                    LOC("窗口和文字透明度不低于 0.2。\n勾选后可调低。", "Window & text opacity capped at 0.2.\nCheck to allow lower values."));
             }
 
             ImGui::Separator();
 
-            /* ---- Scale ---- */
-            ImGui::SliderFloat(LOC("缩放", "Scale"), &g_config.window_scale,
-                          1.0f, 4.0f, "%.1f", ImGuiSliderFlags_None);
+            ImGui::SliderFloat(LOC("缩放", "Scale"), &g_config.window_scale, 1.0f, 4.0f, "%.1f", ImGuiSliderFlags_None);
             {
                 ImGuiIO& io = ImGui::GetIO();
                 io.FontGlobalScale = g_config.window_scale;
@@ -981,54 +842,36 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
 
             ImGui::Checkbox(LOC("窗口置顶", "Always on top"), &g_config.always_on_top);
 
-            /* ---- Mouse passthrough ---- */
-            ImGui::Checkbox(LOC("鼠标穿透", "Mouse passthrough"),
-                                                   &g_config.mouse_passthrough);
+            ImGui::Checkbox(LOC("鼠标穿透", "Mouse passthrough"), &g_config.mouse_passthrough);
             if (g_config.mouse_passthrough) {
                 ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
-                    LOC("启用后将无法用鼠标点击窗口。\n"
-                        "按 Ctrl+Shift+P 可关闭穿透。",
-                        "Cannot click the window once enabled.\n"
-                        "Press Ctrl+Shift+P to disable."));
+                    LOC("启用后将无法用鼠标点击窗口。\n按 Ctrl+Shift+P 可关闭穿透。", "Cannot click the window once enabled.\nPress Ctrl+Shift+P to disable."));
             }
 
             ImGui::Separator();
 
-            /* ---- Visible speakers count ---- */
-            ImGui::SliderInt(LOC("可见发言人数", "Visible speakers"),
-                           &g_config.max_visible_speakers, 1, 64,
-                           "%d", ImGuiSliderFlags_None);
+            ImGui::SliderInt(LOC("可见发言人数", "Visible speakers"), &g_config.max_visible_speakers, 1, 64, "%d", ImGuiSliderFlags_None);
 
             ImGui::Separator();
 
-            /* ---- Show idle users ---- */
-            ImGui::Checkbox(LOC("显示未发言用户", "Show idle users"),
-                           &g_config.show_idle_users);
+            ImGui::Checkbox(LOC("显示未发言用户", "Show idle users"), &g_config.show_idle_users);
             if (g_config.show_idle_users) {
-                ImGui::SliderFloat(LOC("未发言用户透明度", "Idle user opacity"),
-                               &g_config.idle_user_alpha, 0.0f, 1.0f, "%.2f",
-                               ImGuiSliderFlags_None);
+                ImGui::SliderFloat(LOC("未发言用户透明度", "Idle user opacity"), &g_config.idle_user_alpha, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None);
                 if (g_config.idle_user_alpha < 0.2f && !g_config.dangerous_alpha_allowed) {
                     g_config.idle_user_alpha = 0.2f;
                 }
             }
 
-            /* ---- Idle timeout ---- */
-            ImGui::SliderInt(LOC("空闲超时(秒)", "Idle timeout(s)"),
-                           &g_config.idle_timeout_seconds, 1, 30,
-                           "%d", ImGuiSliderFlags_None);
+            ImGui::SliderInt(LOC("空闲超时(秒)", "Idle timeout(s)"), &g_config.idle_timeout_seconds, 1, 30, "%d", ImGuiSliderFlags_None);
 
             ImGui::Separator();
 
-            /* ---- Mumble logging ---- */
-            ImGui::Checkbox(LOC("在 Mumble 输出日志", "Log to Mumble console"),
-                           &g_config.mumble_logging_enabled);
+            ImGui::Checkbox(LOC("在 Mumble 输出日志", "Log to Mumble console"), &g_config.mumble_logging_enabled);
 
             apply_config_to_window();
 
             ImGui::Separator();
 
-            /* ---- Action buttons ---- */
             if (g_window_hidden) {
                 if (ImGui::Button(LOC("显示窗口", "Show Window"), ImVec2(-1.0f, 0.0f))) {
                     g_window_hidden = false;
@@ -1081,12 +924,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                     glfwShowWindow(g_window);
                 }
             }
-
-            ImGui::TextWrapped(
-                LOC("\"重置所有设置\" | 恢复默认值\n"
-                    "拖拽窗口顶部空白区域移动位置。",
-                    "\"Reset All Settings\" | Restore defaults\n"
-                    "Drag the top empty area of the window to move.") );
         ImGui::End();
     }
 
@@ -1099,6 +936,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         int fb_w, fb_h;
         glfwGetFramebufferSize(g_window, &fb_w, &fb_h);
         glViewport(0, 0, fb_w, fb_h);
+        /* 确保 OpenGL 在清空缓冲区时保留 Alpha 0，彻底根绝垫黑块情况 */
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
     }
@@ -1108,7 +946,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         ImGui_ImplOpenGL3_RenderDrawData(draw_data);
     }
 
-    /* Update and render multi-viewport (separate OS windows for settings, etc.) */
     {
         ImGuiIO& io = ImGui::GetIO();
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
@@ -1120,8 +957,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
     }
 
 #ifdef _WIN32
-    /* FIX: ImGui 的 PlatformHandle 保存的是 GLFWwindow*，绝不能直接强转为 HWND，
-     * 否则获取不到真实的系统句柄，导致任务栏无法隐藏设置窗口。*/
+    /* 将所有分离出的设置窗口剥离任务栏属性 */
     {
         ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
         for (int i = 0; i < pio.Viewports.Size; i++) {
@@ -1134,7 +970,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                     needed &= ~WS_EX_APPWINDOW;
                     if (exstyle != needed) {
                         SetWindowLongPtr(hwnd, GWL_EXSTYLE, needed);
-                        /* SWP_FRAMECHANGED with NOACTIVATE / NOREDRAW to avoid flash */
                         SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
                                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
                                      | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOREDRAW);
@@ -1159,7 +994,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
  * ======================================================================== */
 void overlay_window_shutdown(void) {
 #ifdef _WIN32
-    /* Unregister global keyboard hook */
     if (g_keyboard_hook != NULL) {
         UnhookWindowsHookEx(g_keyboard_hook);
         g_keyboard_hook = NULL;
@@ -1167,7 +1001,6 @@ void overlay_window_shutdown(void) {
 #endif
 
     if (g_window != NULL) {
-        /* Save current config before destroying */
         overlay_config_save();
 
         ImGui_ImplOpenGL3_Shutdown();
