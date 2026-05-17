@@ -675,17 +675,26 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             main_flags |= ImGuiWindowFlags_NoInputs;
         }
 
-        /* 
-         * Force the main overlay to stay inside the primary GLFW window.
-         * Without this, ImGui might pop it out into a separate viewport OS window,
-         * which would bypass our native window styles (always-on-top, click-through).
-         */
         ImGuiViewport* main_viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(main_viewport->Pos);
         ImGui::SetNextWindowViewport(main_viewport->ID);
 
-        ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 60.0f), ImVec2(FLT_MAX, FLT_MAX));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f));
+
+        float win_alpha = clamp01f(g_config.alpha);
+        ImGuiStyle& style = ImGui::GetStyle();
+        
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(style.Colors[ImGuiCol_Border].x, style.Colors[ImGuiCol_Border].y, style.Colors[ImGuiCol_Border].z, style.Colors[ImGuiCol_Border].w * win_alpha));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(style.Colors[ImGuiCol_Button].x, style.Colors[ImGuiCol_Button].y, style.Colors[ImGuiCol_Button].z, style.Colors[ImGuiCol_Button].w * win_alpha));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(style.Colors[ImGuiCol_ButtonHovered].x, style.Colors[ImGuiCol_ButtonHovered].y, style.Colors[ImGuiCol_ButtonHovered].z, style.Colors[ImGuiCol_ButtonHovered].w * win_alpha));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(style.Colors[ImGuiCol_ButtonActive].x, style.Colors[ImGuiCol_ButtonActive].y, style.Colors[ImGuiCol_ButtonActive].z, style.Colors[ImGuiCol_ButtonActive].w * win_alpha));
+        ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(style.Colors[ImGuiCol_Separator].x, style.Colors[ImGuiCol_Separator].y, style.Colors[ImGuiCol_Separator].z, style.Colors[ImGuiCol_Separator].w * win_alpha));
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(style.Colors[ImGuiCol_ScrollbarBg].x, style.Colors[ImGuiCol_ScrollbarBg].y, style.Colors[ImGuiCol_ScrollbarBg].z, style.Colors[ImGuiCol_ScrollbarBg].w * win_alpha));
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, ImVec4(style.Colors[ImGuiCol_ScrollbarGrab].x, style.Colors[ImGuiCol_ScrollbarGrab].y, style.Colors[ImGuiCol_ScrollbarGrab].z, style.Colors[ImGuiCol_ScrollbarGrab].w * win_alpha));
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, ImVec4(style.Colors[ImGuiCol_ScrollbarGrabHovered].x, style.Colors[ImGuiCol_ScrollbarGrabHovered].y, style.Colors[ImGuiCol_ScrollbarGrabHovered].z, style.Colors[ImGuiCol_ScrollbarGrabHovered].w * win_alpha));
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, ImVec4(style.Colors[ImGuiCol_ScrollbarGrabActive].x, style.Colors[ImGuiCol_ScrollbarGrabActive].y, style.Colors[ImGuiCol_ScrollbarGrabActive].z, style.Colors[ImGuiCol_ScrollbarGrabActive].w * win_alpha));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(style.Colors[ImGuiCol_FrameBg].x, style.Colors[ImGuiCol_FrameBg].y, style.Colors[ImGuiCol_FrameBg].z, style.Colors[ImGuiCol_FrameBg].w * win_alpha));
+
         ImGui::Begin("SpeakingOverlayMain", NULL, main_flags);
         ImGui::PopStyleVar();
 
@@ -693,6 +702,42 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         base_text_col.w = clamp01f(g_config.text_alpha);
         ImGui::PushStyleColor(ImGuiCol_Text, base_text_col);
 
+        float max_w = 0.0f;
+        for (int di = 0; di < display_count; di++) {
+            int i = display_idx[di];
+            char text_buf[256];
+            snprintf(text_buf, sizeof(text_buf), "  \xe2\x97\x8f  %s  ", names[i]);
+            float w = ImGui::CalcTextSize(text_buf).x;
+
+            const char *status_text;
+            switch (states[i]) {
+                case 1: status_text = LOC("说话", "Talking"); break;
+                case 2: status_text = LOC("密语", "Whisper"); break;
+                case 3: status_text = LOC("喊话", "Shout"); break;
+                default: status_text = LOC("空闲", "Idle"); break;
+            }
+            float st_w = ImGui::CalcTextSize(status_text).x;
+            float row_w = w + st_w + 20.0f;
+            if (row_w > max_w) max_w = row_w;
+        }
+
+        float top_bar_w = 0.0f;
+        if (!g_config.mouse_passthrough) {
+            top_bar_w = ImGui::CalcTextSize(LOC("说话列表", "Speaking Users")).x 
+                      + ImGui::CalcTextSize(LOC("设置", "Settings")).x 
+                      + ImGui::CalcTextSize("X").x + 40.0f;
+        }
+        if (max_w < top_bar_w) max_w = top_bar_w;
+        
+        int max_vis = g_config.max_visible_speakers;
+        if (display_count > max_vis) {
+            max_w += ImGui::GetStyle().ScrollbarSize;
+        }
+
+        if (user_count == 0) {
+            float empty_w = ImGui::CalcTextSize(LOC("  当前没人说话...", "  Nobody is speaking...")).x + 20.0f;
+            if (max_w < empty_w) max_w = empty_w;
+        }
 
         if (!g_config.mouse_passthrough) {
             float title_h = ImGui::GetFrameHeight() + 4.0f;
@@ -707,16 +752,17 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
 
             ImGui::SameLine(0.0f, -1.0f);
             float cx = ImGui::GetCursorPosX();
-            ImVec2 av = ImGui::GetContentRegionAvail();
-            float btn_x = cx + av.x - btn_area;
-            if (btn_x < cx) btn_x = cx;
-            ImGui::SetCursorPosX(btn_x);
+            
+            float right_edge = ImGui::GetCursorStartPos().x + max_w;
+            float btn_target_x = right_edge - btn_area;
+            if (btn_target_x < cx) btn_target_x = cx;
+            ImGui::SetCursorPosX(btn_target_x);
 
             if (ImGui::SmallButton(LOC("设置", "Settings"))) {
                 g_settings_open = !g_settings_open;
             }
             ImGui::SameLine(0.0f, 2.0f);
-            ImGui::SetCursorPosX(btn_x + btn_w + 4.0f);
+            ImGui::SetCursorPosX(btn_target_x + btn_w + 4.0f);
             if (ImGui::SmallButton("X")) {
                 g_user_hid_window = true;
                 g_window_hidden = true;
@@ -728,14 +774,13 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             }
 
             {
-                float drag_w = btn_x - title_pos.x;
+                float drag_w = btn_target_x - title_pos.x;
                 if (drag_w < 20.0f) drag_w = 20.0f;
                 ImVec2 drag_min = ImVec2(title_pos.x, title_pos.y - 2.0f);
                 ImVec2 drag_max = ImVec2(title_pos.x + drag_w, title_pos.y - 2.0f + title_h);
                 bool title_hovered = ImGui::IsMouseHoveringRect(drag_min, drag_max, false);
 
                 if (title_hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-
                 if (title_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     g_drag_active = true;
                     glfwGetWindowPos(g_window, &g_drag_win_x, &g_drag_win_y);
@@ -743,7 +788,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                     g_drag_mouse_x = mouse.x;
                     g_drag_mouse_y = mouse.y;
                 }
-
                 if (g_drag_active && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     ImVec2 mouse = ImGui::GetIO().MousePos;
                     int new_x = g_drag_win_x + (int)(mouse.x - g_drag_mouse_x);
@@ -752,7 +796,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                     g_config.window_y = new_y;
                     glfwSetWindowPos(g_window, new_x, new_y);
                 }
-
                 if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     g_drag_active = false;
                 }
@@ -776,9 +819,14 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         if (user_count == 0) {
             ImGui::TextColored(with_text_alpha(ImVec4(0.45f, 0.45f, 0.45f, 1.0f)), LOC("  当前没人说话...", "  Nobody is speaking..."));
         } else {
-            float avail_h = ImGui::GetContentRegionAvail().y;
-            if (avail_h < 30.0f) avail_h = 30.0f;
-            ImGui::BeginChild("SpeakerList", ImVec2(0, avail_h), false, ImGuiWindowFlags_NoSavedSettings);
+            int pinned_count = (display_count < max_vis) ? display_count : max_vis;
+            float child_h = pinned_count * ImGui::GetTextLineHeightWithSpacing();
+            if (display_count > max_vis) {
+                child_h += 6.0f;
+                child_h += ImGui::GetTextLineHeightWithSpacing();
+            }
+
+            ImGui::BeginChild("SpeakerList", ImVec2(max_w, child_h), false, ImGuiWindowFlags_NoSavedSettings);
 
             if (should_snap_to_top) {
                 ImGui::SetScrollHereY(0.0f);
@@ -790,9 +838,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 }
                 g_last_scroll_y = cur_scroll;
             }
-
-            int max_vis = g_config.max_visible_speakers;
-            int pinned_count = (display_count < max_vis) ? display_count : max_vis;
 
             for (int di = 0; di < display_count; di++) {
                 int i = display_idx[di];
@@ -823,7 +868,11 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 ImGui::SameLine(0.0f, -1.0f);
                 float text_w = ImGui::CalcTextSize(status_text).x;
                 float avail_w = ImGui::GetContentRegionAvail().x;
-                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail_w - text_w);
+                float cur_x = ImGui::GetCursorPosX();
+                float target_x = cur_x + avail_w - text_w;
+                if (target_x > cur_x) {
+                    ImGui::SetCursorPosX(target_x);
+                }
                 ImVec4 st_col = ImVec4(0.5f, 0.5f, 0.5f, is_pinned ? 1.0f : 0.5f);
                 if (is_idle) st_col.w *= g_config.idle_user_alpha;
                 ImGui::TextColored(with_text_alpha(st_col), "%s", status_text);
@@ -831,23 +880,25 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             ImGui::EndChild();
         }
 
-        /* Auto-size the window only while it is not being dragged. */
+        ImGui::Dummy(ImVec2(max_w, 0.0f));
+
         if (!g_drag_active) {
-            float content_h = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y * 2.0f
-                              + ImGui::GetStyle().FramePadding.y * 2.0f;
-            float scale = g_config.window_scale;
-            if (scale < 0.01f) scale = 1.0f;
-            int target_h = (int)(content_h / scale + 0.5f);
-            if (target_h < 40) target_h = 40;
+            ImVec2 win_size = ImGui::GetWindowSize();
+            int target_w = (int)(win_size.x + 0.5f);
+            int target_h = (int)(win_size.y + 0.5f);
+            
             int cur_w, cur_h;
             glfwGetWindowSize(g_window, &cur_w, &cur_h);
-            glfwSetWindowSize(g_window, cur_w, target_h);
-            g_config.window_width = cur_w;
-            g_config.window_height = target_h;
+            
+            if (cur_w != target_w || cur_h != target_h) {
+                glfwSetWindowSize(g_window, target_w, target_h);
+                g_config.window_width = target_w;
+                g_config.window_height = target_h;
+            }
             g_first_frame = false;
         }
 
-        ImGui::PopStyleColor();
+        ImGui::PopStyleColor(11);
         ImGui::End();
     }
 
