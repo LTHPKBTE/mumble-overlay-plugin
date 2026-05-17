@@ -85,14 +85,24 @@ static int overlay_poll_speakers(void *userdata,
     speaking_user_t buffer[64];
     overlay_config_t cfg;
     overlay_window_get_config(&cfg);
-    int timeout = cfg.idle_timeout_seconds;
-    if (timeout < 1) timeout = 5;
-    /* When show_idle_users is on, keep passive users around much longer
-     * so they don't disappear from the list while idle. */
-    if (cfg.show_idle_users && timeout < 600) {
-        timeout = 600; /* 10 minutes */
+    int count;
+
+    if (cfg.show_all_users) {
+        /* Always show all known users — never prune.
+         * Use a very large timeout so passive entries aren't freed. */
+        int huge_timeout = 86400 * 365; /* 1 year */
+        count = speaking_users_get_all(buffer, 64, huge_timeout);
+    } else if (cfg.show_recent_speakers) {
+        /* Show recently speaking users with configured timeout. */
+        int timeout = cfg.idle_timeout_seconds;
+        if (timeout < 1) timeout = 30;
+        count = speaking_users_get_all(buffer, 64, timeout);
+    } else {
+        /* Only show actively speaking users. Use a reasonable
+         * cleanup timeout to purge stale passive entries. */
+        count = speaking_users_get_active(buffer, 64, 60);
     }
-    int count = speaking_users_get_all(buffer, 64, timeout);
+
     if (count > max_count) count = max_count;
 
     for (int i = 0; i < count; i++) {

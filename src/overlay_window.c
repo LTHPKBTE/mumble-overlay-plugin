@@ -241,7 +241,8 @@ overlay_config_t overlay_config_default(void) {
     cfg.always_on_top     = true;
     cfg.max_visible_speakers = 8;
     cfg.dangerous_alpha_allowed = false;
-    cfg.show_idle_users   = true;
+    cfg.show_all_users       = true;   /* always show all known users */
+    cfg.show_recent_speakers = false;  /* off by default */
     cfg.idle_user_alpha   = 0.3f;
     cfg.idle_timeout_seconds = 5;
     cfg.mumble_logging_enabled = true;
@@ -318,7 +319,8 @@ static void overlay_config_save(void) {
     fprintf(f, "mouse_passthrough=%d\n", g_config.mouse_passthrough ? 1 : 0);
     fprintf(f, "always_on_top=%d\n",   g_config.always_on_top ? 1 : 0);
     fprintf(f, "max_visible_speakers=%d\n", g_config.max_visible_speakers);
-    fprintf(f, "show_idle_users=%d\n",  g_config.show_idle_users ? 1 : 0);
+    fprintf(f, "show_all_users=%d\n",  g_config.show_all_users ? 1 : 0);
+    fprintf(f, "show_recent_speakers=%d\n", g_config.show_recent_speakers ? 1 : 0);
     fprintf(f, "idle_user_alpha=%.3f\n",(double)g_config.idle_user_alpha);
     fprintf(f, "idle_timeout_seconds=%d\n", g_config.idle_timeout_seconds);
     fprintf(f, "mumble_logging_enabled=%d\n", g_config.mumble_logging_enabled ? 1 : 0);
@@ -360,7 +362,12 @@ static void overlay_config_load(overlay_config_t *cfg) {
         else if (sscanf(line, "mouse_passthrough=%d", &ival) == 1) cfg->mouse_passthrough = (ival != 0);
         else if (sscanf(line, "always_on_top=%d", &ival) == 1)   cfg->always_on_top = (ival != 0);
         else if (sscanf(line, "max_visible_speakers=%d", &ival) == 1) cfg->max_visible_speakers = ival;
-        else if (sscanf(line, "show_idle_users=%d", &ival) == 1)   cfg->show_idle_users = (ival != 0);
+        else if (sscanf(line, "show_all_users=%d", &ival) == 1)      cfg->show_all_users = (ival != 0);
+        else if (sscanf(line, "show_idle_users=%d", &ival) == 1) {
+            /* backward compat: old config key maps to show_all_users */
+            cfg->show_all_users = (ival != 0);
+        }
+        else if (sscanf(line, "show_recent_speakers=%d", &ival) == 1) cfg->show_recent_speakers = (ival != 0);
         else if (sscanf(line, "idle_user_alpha=%f", &fval) == 1)   cfg->idle_user_alpha = fval;
         else if (sscanf(line, "idle_timeout_seconds=%d", &ival) == 1) cfg->idle_timeout_seconds = ival;
         else if (sscanf(line, "dangerous_alpha_allowed=%d", &ival) == 1) cfg->dangerous_alpha_allowed = (ival != 0);
@@ -395,7 +402,8 @@ int overlay_window_init(const overlay_config_t *cfg) {
         /* Always honor explicitly-set boolean/float overrides */
         g_config.alpha             = cfg->alpha;
         g_config.text_alpha        = cfg->text_alpha;
-        g_config.show_idle_users   = cfg->show_idle_users;
+        g_config.show_all_users    = cfg->show_all_users;
+        g_config.show_recent_speakers = cfg->show_recent_speakers;
         g_config.idle_user_alpha   = cfg->idle_user_alpha;
         g_config.window_scale      = cfg->window_scale;
         g_config.mouse_passthrough = cfg->mouse_passthrough;
@@ -920,7 +928,9 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             for (int di = 0; di < display_count; di++) {
                 int i = display_idx[di];
                 bool is_idle = (states[i] == 0 || states[i] == 4);
-                if (is_idle && !g_config.show_idle_users) continue;
+
+                /* Filter: skip idle users unless show_all_users or show_recent_speakers */
+                if (is_idle && !g_config.show_all_users && !g_config.show_recent_speakers) continue;
 
                 ImVec4 col;
                 const char *status_text;
@@ -1081,15 +1091,32 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
 
             ImGui::Separator();
 
-            if (ImGui::Checkbox(LOC("显示未发言用户", "Show idle users"), &g_config.show_idle_users)) settings_changed = true;
-            if (g_config.show_idle_users) {
-                if (ImGui::SliderFloat(LOC("未发言用户透明度", "Idle user opacity"), &g_config.idle_user_alpha, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None)) settings_changed = true;
-                if (g_config.idle_user_alpha < 0.2f && !g_config.dangerous_alpha_allowed) {
-                    g_config.idle_user_alpha = 0.2f;
+            /* ---- User display options ---- */
+            if (ImGui::Checkbox(LOC("一直显示所有用户", "Always show all users"), &g_config.show_all_users)) {
+                settings_changed = true;
+                if (g_config.show_all_users) {
+                    g_config.show_recent_speakers = false;
                 }
             }
-
-            if (ImGui::SliderInt(LOC("空闲超时(秒)", "Idle timeout(s)"), &g_config.idle_timeout_seconds, 1, 30, "%d", ImGuiSliderFlags_None)) settings_changed = true;
+            if (g_config.show_all_users) {
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                    LOC("所有已知用户将始终显示在列表中。", "All known users will always be shown in the list."));
+            } else {
+                ImGui::Spacing();
+                if (ImGui::Checkbox(LOC("显示刚刚发言的用户", "Show recently speaking users"), &g_config.show_recent_speakers)) settings_changed = true;
+                if (g_config.show_recent_speakers) {
+                    if (ImGui::SliderFloat(LOC("未发言用户透明度", "Idle user opacity"), &g_config.idle_user_alpha, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_None)) settings_changed = true;
+                    if (g_config.idle_user_alpha < 0.2f && !g_config.dangerous_alpha_allowed) {
+                        g_config.idle_user_alpha = 0.2f;
+                    }
+                    if (ImGui::SliderInt(LOC("空闲超时(秒)", "Idle timeout(s)"), &g_config.idle_timeout_seconds, 1, 120, "%d", ImGuiSliderFlags_None)) settings_changed = true;
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                        LOC("超过超时时间的未发言用户将从列表中移除。", "Idle users beyond timeout will be removed from the list."));
+                } else {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
+                        LOC("仅显示正在发言的用户。", "Only show users who are currently speaking."));
+                }
+            }
 
             ImGui::Separator();
 
@@ -1135,7 +1162,8 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 g_config.always_on_top     = def.always_on_top;
                 g_config.max_visible_speakers = def.max_visible_speakers;
                 g_config.dangerous_alpha_allowed = def.dangerous_alpha_allowed;
-                g_config.show_idle_users   = def.show_idle_users;
+                g_config.show_all_users       = def.show_all_users;
+                g_config.show_recent_speakers = def.show_recent_speakers;
                 g_config.idle_user_alpha   = def.idle_user_alpha;
                 g_config.idle_timeout_seconds = def.idle_timeout_seconds;
                 g_config.mumble_logging_enabled = def.mumble_logging_enabled;

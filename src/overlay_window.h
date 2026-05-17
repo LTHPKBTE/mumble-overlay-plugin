@@ -33,9 +33,10 @@ typedef struct {
     bool  always_on_top;      /* window stays on top of others */
     int   max_visible_speakers; /* max "recent" speakers shown at top before scroll */
     bool  dangerous_alpha_allowed; /* allow alpha below 0.2 */
-    bool  show_idle_users;    /* show non-speaking users dimmed */
+    bool  show_all_users;       /* always show all known users (never prune) */
+    bool  show_recent_speakers; /* show recently-speaking users dimmed (only when !show_all_users) */
     float idle_user_alpha;    /* opacity for non-speaking users (0.0 – 1.0) */
-    int   idle_timeout_seconds; /* seconds before a passive user is pruned from list */
+    int   idle_timeout_seconds; /* seconds before a passive user is pruned (only when show_recent_speakers) */
     bool  mumble_logging_enabled; /* whether to print log messages via MumbleAPI */
 } overlay_config_t;
 
