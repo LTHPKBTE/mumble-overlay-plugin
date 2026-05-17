@@ -675,21 +675,6 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             main_flags |= ImGuiWindowFlags_NoInputs;
         }
 
-        /* ================================================================
-     * Main panel rendering area
-     * ================================================================ */
-    if (!g_window_hidden) {
-        ImGuiWindowFlags main_flags = ImGuiWindowFlags_NoTitleBar
-                                    | ImGuiWindowFlags_NoResize
-                                    | ImGuiWindowFlags_NoCollapse
-                                    | ImGuiWindowFlags_NoBringToFrontOnFocus
-                                    | ImGuiWindowFlags_NoSavedSettings
-                                    | ImGuiWindowFlags_AlwaysAutoResize;
-
-        if (g_config.mouse_passthrough) {
-            main_flags |= ImGuiWindowFlags_NoInputs;
-        }
-
         /* 
          * Force the main overlay to stay inside the primary GLFW window.
          * Without this, ImGui might pop it out into a separate viewport OS window,
