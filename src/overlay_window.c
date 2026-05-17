@@ -706,6 +706,8 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
         ImGui::Begin("SpeakingOverlayMain", NULL, main_flags);
         ImGui::PopStyleVar();
 
+        bool is_interactive_hovered = false;
+
         ImVec4 base_text_col = ImGui::GetStyleColorVec4(ImGuiCol_Text);
         base_text_col.w = clamp01f(g_config.text_alpha);
         ImGui::PushStyleColor(ImGuiCol_Text, base_text_col);
@@ -769,6 +771,8 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             if (ImGui::SmallButton(LOC("设置", "Settings"))) {
                 g_settings_open = !g_settings_open;
             }
+            if (ImGui::IsItemHovered()) is_interactive_hovered = true;
+
             ImGui::SameLine(0.0f, 2.0f);
             ImGui::SetCursorPosX(btn_target_x + btn_w + 4.0f);
             if (ImGui::SmallButton("X")) {
@@ -779,35 +783,9 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", LOC("隐藏窗口（插件继续运行）", "Hide window (plugin keeps running)"));
+                is_interactive_hovered = true;
             }
-
-            {
-                float drag_w = btn_target_x - title_pos.x;
-                if (drag_w < 20.0f) drag_w = 20.0f;
-                ImVec2 drag_min = ImVec2(title_pos.x, title_pos.y - 2.0f);
-                ImVec2 drag_max = ImVec2(title_pos.x + drag_w, title_pos.y - 2.0f + title_h);
-                bool title_hovered = ImGui::IsMouseHoveringRect(drag_min, drag_max, false);
-
-                if (title_hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (title_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                    g_drag_active = true;
-                    glfwGetWindowPos(g_window, &g_drag_win_x, &g_drag_win_y);
-                    ImVec2 mouse = ImGui::GetIO().MousePos;
-                    g_drag_mouse_x = mouse.x;
-                    g_drag_mouse_y = mouse.y;
-                }
-                if (g_drag_active && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                    ImVec2 mouse = ImGui::GetIO().MousePos;
-                    int new_x = g_drag_win_x + (int)(mouse.x - g_drag_mouse_x);
-                    int new_y = g_drag_win_y + (int)(mouse.y - g_drag_mouse_y);
-                    g_config.window_x = new_x;
-                    g_config.window_y = new_y;
-                    glfwSetWindowPos(g_window, new_x, new_y);
-                }
-                if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                    g_drag_active = false;
-                }
-            }
+        }
         }
 
         if (!g_config.mouse_passthrough) ImGui::Separator();
@@ -835,7 +813,13 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 child_h += ImGui::GetTextLineHeightWithSpacing();
             }
 
-            ImGui::BeginChild("SpeakerList", ImVec2(max_w, child_h), false, ImGuiWindowFlags_NoSavedSettings);
+            // Dynamically configure child flags: suppress scrollbar when count fits without scrolling
+            ImGuiWindowFlags child_flags = ImGuiWindowFlags_NoSavedSettings;
+            if (display_count <= max_vis) {
+                child_flags |= ImGuiWindowFlags_NoScrollbar;
+            }
+
+            ImGui::BeginChild("SpeakerList", ImVec2(max_w, child_h), false, child_flags);
 
             if (should_snap_to_top) {
                 ImGui::SetScrollHereY(0.0f);
@@ -887,9 +871,49 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
                 ImGui::TextColored(with_text_alpha(st_col), "%s", status_text);
             }
             ImGui::EndChild();
+
+            // Exclude scrollbar area from drag detection to avoid conflict with scrolling
+            if (display_count > max_vis) {
+                ImVec2 child_min = ImGui::GetItemRectMin();
+                ImVec2 child_max = ImGui::GetItemRectMax();
+                float scrollbar_width = ImGui::GetStyle().ScrollbarSize;
+                ImVec2 scrollbar_min = ImVec2(child_max.x - scrollbar_width, child_min.y);
+                if (ImGui::IsMouseHoveringRect(scrollbar_min, child_max, false)) {
+                    is_interactive_hovered = true;
+                }
+            }
         }
 
         ImGui::Dummy(ImVec2(max_w, 0.0f));
+
+        // New drag logic: drag anywhere on the main window except over interactive elements
+        if (!g_config.mouse_passthrough) {
+            bool can_drag = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && !is_interactive_hovered;
+            
+            if (can_drag || g_drag_active) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            }
+            
+            if (can_drag && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                g_drag_active = true;
+                glfwGetWindowPos(g_window, &g_drag_win_x, &g_drag_win_y);
+                ImVec2 mouse = ImGui::GetIO().MousePos;
+                g_drag_mouse_x = mouse.x;
+                g_drag_mouse_y = mouse.y;
+            }
+            if (g_drag_active) {
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    ImVec2 mouse = ImGui::GetIO().MousePos;
+                    int new_x = g_drag_win_x + (int)(mouse.x - g_drag_mouse_x);
+                    int new_y = g_drag_win_y + (int)(mouse.y - g_drag_mouse_y);
+                    g_config.window_x = new_x;
+                    g_config.window_y = new_y;
+                    glfwSetWindowPos(g_window, new_x, new_y);
+                } else {
+                    g_drag_active = false;
+                }
+            }
+        }
 
         /* --- Core fix: use GetCursorPosY() for accurate content height, add 2-px tolerance --- */
         if (!g_drag_active) {
@@ -962,6 +986,7 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             if (ImGui::IsItemEdited()) settings_changed = true;
 
             ImGui::Checkbox(LOC("鼠标穿透", "Mouse passthrough"), &g_config.mouse_passthrough);
+            if (ImGui::IsItemEdited()) settings_changed = true;
             if (g_config.mouse_passthrough) {
                 ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
                     LOC("启用后将无法用鼠标点击窗口。\n按 Ctrl+Shift+P 可关闭穿透。", "Cannot click the window once enabled.\nPress Ctrl+Shift+P to disable."));
