@@ -38,9 +38,11 @@ Click the Settings button to open:
 | **Always on top** | Keep window above other windows |
 | **Mouse passthrough** | Let mouse clicks pass through the main overlay window (the settings panel stays interactive) |
 | **Visible speakers** | Number of recent speakers shown at top (1~64) |
-| **Show idle users** | When checked, non-speaking users are shown dimmed in the list. When unchecked, only actively-speaking users appear |
-| **Idle user opacity** | Opacity for non-speaking users (0.0 ~ 1.0). Also capped at 0.2 when dangerous mode is off |
-| **Idle timeout (s)** | Seconds before a passive user is removed from the list (1~30). Default 5 |
+| **Always show all users** | When checked, all known users are always displayed in the list. Hides the "Recently speaking" option below |
+| **Show recently speaking users** | (Only visible when "Always show all users" is off) When checked, recently-speaking users are shown dimmed |
+| **Idle user opacity** | Opacity for non-speaking/recent users (0.0 ~ 1.0). Also capped at 0.2 when dangerous mode is off |
+| **Idle timeout (s)** | Seconds before an idle user is removed from the list (1~120) |
+| **Only show current channel** | When checked, only users in the same channel as you are shown |
 | **Show Window** (button) | Re-show a hidden window |
 | **Reset Position** (button) | Reset window position and size to defaults |
 | **Reset All Settings** (button) | Reset all settings to factory defaults |
@@ -69,8 +71,8 @@ When **Mouse passthrough** is enabled:
   - Mouse passthrough is enabled, or
   - The mouse has been away from the window for 10+ seconds.
   Once you manually scroll, auto-snap is suspended until the next idle period.
-- Idle users: When "Show idle users" is enabled, non-speaking (passive) users are displayed in the list with reduced opacity. All users on the server are shown (fetched via Mumble API on connect), so you can see the entire channel at a glance.
-- Idle timeout: Passive users are automatically removed from the list after N seconds of inactivity (configurable in Settings, default 5).
+- Idle users: With "Always show all users" enabled, all known users are displayed and never removed. With "Show recently speaking users", non-speaking users appear dimmed and are pruned after the configured timeout. When both are off, only actively-speaking users are shown.
+- Channel filter: Enable "Only show current channel" to limit the list to users in the same channel as you. Channel membership is tracked via Mumble API callbacks.
 
 ### If the Window Is Lost or Off-Screen
 
@@ -82,7 +84,7 @@ If it's hidden:
 
 If the window is off-screen or mispositioned, use **Settings > Reset Position** to restore it to the default location.
 
-All configurable settings (position, size, transparency, passthrough, always-on-top, visible speakers count) are automatically saved to disk when Mumble exits and restored next time the plugin loads.
+All configurable settings are saved to disk immediately when changed in the Settings panel, and also when the plugin shuts down. They are restored automatically on next load. If the config directory doesn't exist, it is created automatically.
 
 Saved config location:
 - Windows: `%APPDATA%\Mumble\SpeakingOverlay.cfg`
