@@ -497,19 +497,27 @@ static void apply_config_to_window(void) {
     if (hwnd) {
         LONG_PTR exstyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
 
-        exstyle |= WS_EX_LAYERED | WS_EX_TOOLWINDOW;
+        /* 
+         * Add WS_EX_TOOLWINDOW and remove WS_EX_APPWINDOW to hide from taskbar.
+         * Preserve WS_EX_LAYERED if GLFW set it for transparent framebuffer.
+         */
+        exstyle |= WS_EX_TOOLWINDOW;
         exstyle &= ~WS_EX_APPWINDOW;
-        exstyle &= ~WS_EX_NOREDIRECTIONBITMAP;
 
+        /* Enable click-through by adding WS_EX_TRANSPARENT */
         if (g_config.mouse_passthrough) {
-            exstyle |= WS_EX_TRANSPARENT;
+            exstyle |= WS_EX_LAYERED | WS_EX_TRANSPARENT;
         } else {
             exstyle &= ~WS_EX_TRANSPARENT;
         }
 
         SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
 
-        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+        /* 
+         * DO NOT call SetLayeredWindowAttributes here! 
+         * Calling it forces constant alpha and breaks the per-pixel alpha of 
+         * GLFW's transparent framebuffer, causing a pure black background.
+         */
 
         SetWindowPos(hwnd,
             g_config.always_on_top ? HWND_TOPMOST : HWND_NOTOPMOST,
@@ -667,13 +675,19 @@ bool overlay_window_frame(overlay_poll_speakers_fn poll, void *userdata) {
             main_flags |= ImGuiWindowFlags_NoInputs;
         }
 
+        /* 
+         * Force the main overlay to stay inside the primary GLFW window.
+         * Without this, ImGui might pop it out into a separate viewport OS window,
+         * which would bypass our native window styles (always-on-top, click-through).
+         */
+        ImGuiViewport* main_viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(main_viewport->Pos);
+        ImGui::SetNextWindowViewport(main_viewport->ID);
+
         ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 60.0f), ImVec2(FLT_MAX, FLT_MAX));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 4.0f));
         ImGui::Begin("SpeakingOverlayMain", NULL, main_flags);
         ImGui::PopStyleVar();
-        ImVec4 base_text_col = ImGui::GetStyleColorVec4(ImGuiCol_Text);
-        base_text_col.w = clamp01f(g_config.text_alpha);
-        ImGui::PushStyleColor(ImGuiCol_Text, base_text_col);
 
         if (!g_config.mouse_passthrough) {
             float title_h = ImGui::GetFrameHeight() + 4.0f;
